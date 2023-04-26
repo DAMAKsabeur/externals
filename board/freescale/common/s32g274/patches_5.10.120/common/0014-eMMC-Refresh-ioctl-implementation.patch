@@ -1,0 +1,799 @@
+diff --git a/drivers/mmc/core/Kconfig b/drivers/mmc/core/Kconfig
+index c12fe13e4b14..500109f7f057 100644
+--- a/drivers/mmc/core/Kconfig
++++ b/drivers/mmc/core/Kconfig
+@@ -81,3 +81,14 @@ config MMC_TEST
+ 	  This driver is only of interest to those developing or
+ 	  testing a host driver. Most people should say N here.
+ 
++config MMC_REFRESH
++	bool "Enable refresh custom command 65 support"
++	depends on MMC_BLOCK
++	default y
++	help
++	  Refresh allows to restart the data retention of the eMMC by
++	  reading the data and writing it at the same logical address.
++	  Or reading only for read refresh (maintenance done by the eMMC FTL).
++	  MMC_IOCTL is used to send a command, capture by the driver to perform
++	  the refresh of an area of the eMMC.
++
+diff --git a/drivers/mmc/core/Makefile b/drivers/mmc/core/Makefile
+index 95ffe008ebdf..c32762a9255d 100644
+--- a/drivers/mmc/core/Makefile
++++ b/drivers/mmc/core/Makefile
+@@ -18,3 +18,4 @@ obj-$(CONFIG_MMC_BLOCK)		+= mmc_block.o
+ mmc_block-objs			:= block.o queue.o
+ obj-$(CONFIG_MMC_TEST)		+= mmc_test.o
+ obj-$(CONFIG_SDIO_UART)		+= sdio_uart.o
++obj-$(CONFIG_MMC_REFRESH)	+= refresh.o
+diff --git a/drivers/mmc/core/block.c b/drivers/mmc/core/block.c
+index 3246598e4d7e..945c85065ffc 100644
+--- a/drivers/mmc/core/block.c
++++ b/drivers/mmc/core/block.c
+@@ -56,6 +56,9 @@
+ #include "mmc_ops.h"
+ #include "quirks.h"
+ #include "sd_ops.h"
++#ifdef CONFIG_MMC_REFRESH
++#include "refresh.h"
++#endif
+ 
+ MODULE_ALIAS("mmc:block");
+ #ifdef MODULE_PARAM_PREFIX
+@@ -1006,7 +1009,38 @@ static void mmc_blk_issue_drv_op(struct mmc_queue *mq, struct request *req)
+ 	case MMC_DRV_OP_IOCTL_RPMB:
+ 		idata = mq_rq->drv_op_data;
+ 		for (i = 0, ret = 0; i < mq_rq->ioc_count; i++) {
+-			ret = __mmc_blk_ioctl_cmd(card, md, idata[i]);
++#ifdef CONFIG_MMC_REFRESH
++			if (idata[i]->ic.opcode == MMC_DRIVER_REFRESH) {
++				/* eMMC refresh */
++				if (idata[i]->ic.blocks == 1) {
++					struct refresh_req_params params;
++					struct refresh_ioctl_intf *inputs = (struct refresh_ioctl_intf *)idata[i]->buf;
++
++					memset(&params, 0, sizeof(params));
++					params.card = card;
++					params.blk_mqueue = req->q;
++					params.mode = inputs->mode;
++					params.rel_write = (inputs->flags & FLAGS_REL_WRITE_MASK) != 0;
++					params.interrupt = (inputs->flags & FLAGS_INTERRUPTABLE_MASK) != 0;
++					params.nb_blocks = inputs->nb_blocks;
++					params.block_addr = idata[i]->ic.arg;
++					params.nb_blocks_per_loop = inputs->nb_blocks_per_loop;
++					ret = mmc_blk_refresh(&params);
++
++					/* Fill the response buffer with some statistics */
++					((unsigned int *)idata[i]->buf)[0] = params.block_addr;		/* address of next block to be refreshed */
++					((unsigned int *)idata[i]->buf)[1] = params.skip_count;		/* blocks skipped */
++					((unsigned int *)idata[i]->buf)[2] = params.remaining_blk;	/* remaining blocks due to interrupt */
++				} else {
++					pr_debug("%s: Error with format of the write refresh format (nb_block received: %d)\n",
++						mmc_hostname(card->host), idata[i]->ic.blocks);
++					ret = -EINVAL;
++				}
++			} else
++#endif
++			{
++				ret = __mmc_blk_ioctl_cmd(card, md, idata[i]);
++			}
+ 			if (ret)
+ 				break;
+ 		}
+diff --git a/drivers/mmc/core/mmc_ops.c b/drivers/mmc/core/mmc_ops.c
+index ebad70e4481a..d4d109fa46b8 100644
+--- a/drivers/mmc/core/mmc_ops.c
++++ b/drivers/mmc/core/mmc_ops.c
+@@ -9,6 +9,7 @@
+ #include <linux/export.h>
+ #include <linux/types.h>
+ #include <linux/scatterlist.h>
++#include <linux/blk-mq.h>
+ 
+ #include <linux/mmc/host.h>
+ #include <linux/mmc/card.h>
+@@ -1029,6 +1030,50 @@ int mmc_cmdq_disable(struct mmc_card *card)
+ }
+ EXPORT_SYMBOL_GPL(mmc_cmdq_disable);
+ 
++bool mmc_check_queue_content(struct request_queue *queue)
++{
++	bool need_run = false;
++	unsigned int idx;
++	struct blk_mq_hw_ctx *hctx;
++
++	queue_for_each_hw_ctx(queue, hctx, idx) {
++		/* Extract from blk_mq_run_hw_queue in blk-mq.c */
++		int srcu_idx = 0;
++
++		/* lock mutex */
++		if (!(hctx->flags & BLK_MQ_F_BLOCKING))
++			rcu_read_lock();
++		else
++			srcu_idx = srcu_read_lock(hctx->srcu);
++
++		/*
++		 * When queue is quiesced, we may be switching io scheduler, or
++		 * updating nr_hw_queues, or other things, and we can't run queue
++		 * any more, even __blk_mq_hctx_has_pending() can't be called safely.
++		 *
++		 * And queue will be rerun in blk_mq_unquiesce_queue() if it is
++		 * quiesced.
++		 */
++		if (!blk_queue_quiesced(hctx->queue)) {
++			bool has_work = false;
++			struct elevator_queue *elev = hctx->queue->elevator;
++
++			if (elev && elev->type->ops.has_work)
++				has_work = elev->type->ops.has_work(hctx);
++			need_run = !list_empty_careful(&hctx->dispatch) || sbitmap_any_bit_set(&hctx->ctx_map) || has_work;
++		}
++		/* unlock the mutex */
++		if (!(hctx->flags & BLK_MQ_F_BLOCKING))
++			rcu_read_unlock();
++		else
++			srcu_read_unlock(hctx->srcu, srcu_idx);
++		/* Don't look at the following HW queues if we already found a valid command in one queue */
++		if (need_run)
++			break;
++	}
++	return need_run;
++}
++
+ int mmc_sanitize(struct mmc_card *card)
+ {
+ 	struct mmc_host *host = card->host;
+diff --git a/drivers/mmc/core/mmc_ops.h b/drivers/mmc/core/mmc_ops.h
+index 632009260e51..8da976c1d579 100644
+--- a/drivers/mmc/core/mmc_ops.h
++++ b/drivers/mmc/core/mmc_ops.h
+@@ -46,6 +46,7 @@ void mmc_run_bkops(struct mmc_card *card);
+ int mmc_flush_cache(struct mmc_card *card);
+ int mmc_cmdq_enable(struct mmc_card *card);
+ int mmc_cmdq_disable(struct mmc_card *card);
++bool mmc_check_queue_content(struct request_queue *queue);
+ int mmc_sanitize(struct mmc_card *card);
+ 
+ #endif
+diff --git a/drivers/mmc/core/refresh.c b/drivers/mmc/core/refresh.c
+new file mode 100644
+index 000000000000..203da22389d2
+--- /dev/null
++++ b/drivers/mmc/core/refresh.c
+@@ -0,0 +1,570 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ *  linux/drivers/mmc/core/refresh.c
++ *
++ *  Copyright 2021 Christophe Drobny (Continental)
++ */
++
++#include <linux/types.h>
++#include <linux/scatterlist.h>
++
++#include <linux/mmc/host.h>
++#include <linux/mmc/mmc.h>
++
++#include "core.h"
++#include "card.h"
++#include "host.h"
++#include "queue.h"
++#include "refresh.h"
++#include "mmc_ops.h"
++
++#define MMC_BLOCK_SIZE		((size_t)512)	/**< size of an eMMC block */
++#define SBC_REL_WRITE_BIT	(1UL<<31)	/**< Bit to activate the reliable write in the Set Block Count */
++#define NB_512B_IN_4K		8		/**< Ratio of the number of 512B into a 4K buffer */
++
++/** @brief internal iteration parameters */
++struct iteration_params {
++	unsigned int iter_nb_blocks;	/**< iteration number of block */
++	struct scatterlist *sg;		/**< scatter list for the DMA transfer */
++	int sg_len;			/**< length of the scatter list */
++	bool write;			/**< true for write request, false for read request */
++};
++
++static int __mmc_blk_refresh_function(struct refresh_req_params *params);
++#ifdef EMMC_KPI_MEASUREMENTS
++static void untrim_buffer(unsigned int *cur_ptr, int iter_nb_blocks, unsigned char erased_byte);
++static int __mmc_blk_erase_function(struct refresh_req_params *params);
++#endif
++
++
++/** @brief prepare the data part of the mmc request
++ *
++ * @param[in] params description of the request to be prepared
++ * @param[in] iter_params iteration specific parameters of the request
++ * @param[out] brq block request to be filled in
++ *
++ * @see inspired from mmc_blk_data_prep in block.c
++ */
++static void mmc_refresh_data_prep(const struct refresh_req_params *params, const struct iteration_params *iter_params, struct mmc_blk_request *brq)
++{
++	memset(brq, 0, sizeof(struct mmc_blk_request));
++
++	brq->mrq.data = &brq->data;
++
++	brq->stop.opcode = MMC_STOP_TRANSMISSION;
++	brq->stop.arg = 0;
++
++	if (iter_params->write) {
++		brq->data.flags = MMC_DATA_WRITE;
++		brq->stop.flags = MMC_RSP_SPI_R1B | MMC_RSP_R1B | MMC_CMD_AC;
++	} else {
++		brq->data.flags = MMC_DATA_READ;
++		brq->stop.flags = MMC_RSP_SPI_R1 | MMC_RSP_R1 | MMC_CMD_AC;
++	}
++
++	brq->data.blksz = MMC_BLOCK_SIZE;
++	brq->data.blocks = iter_params->iter_nb_blocks;
++	brq->data.blk_addr = params->block_addr;
++
++	mmc_set_data_timeout(&brq->data, params->card);
++
++	brq->data.sg = iter_params->sg;
++	brq->data.sg_len = iter_params->sg_len;
++}
++
++/** @brief prepare a read or write mmc request
++ *
++ * @param[in] params description of the request to be prepared
++ * @param[in] iter_params iteration specific parameters of the request
++ * @param[out] brq block request to be filled in
++ *
++ * @see inspire from mmc_blk_rw_rq_prep in block.c
++ */
++static void mmc_refresh_rw_rq_prep(const struct refresh_req_params *params, const struct iteration_params *iter_params, struct mmc_blk_request *brq)
++{
++	u32 readcmd, writecmd;
++	/* Prepare data */
++	mmc_refresh_data_prep(params, iter_params, brq);
++
++	/* prepare command */
++	brq->mrq.cmd = &brq->cmd;
++	brq->cmd.arg = params->block_addr;
++	/* Some card takes the arg as byte address, but if size is >2GB arg is the block address */
++	if (!mmc_card_blockaddr(params->card))
++		brq->cmd.arg <<= 9;
++	brq->cmd.flags = MMC_RSP_SPI_R1 | MMC_RSP_R1 | MMC_CMD_ADTC;
++
++	/* The only way to inform the eMMC about the reliable write is to use the Set Block Count (sbc) flag */
++	if (brq->data.blocks > 1 || (params->rel_write && iter_params->write)) {
++		brq->mrq.stop = &brq->stop;
++		readcmd = MMC_READ_MULTIPLE_BLOCK;
++		writecmd = MMC_WRITE_MULTIPLE_BLOCK;
++	} else {
++		brq->mrq.stop = NULL;
++		readcmd = MMC_READ_SINGLE_BLOCK;
++		writecmd = MMC_WRITE_BLOCK;
++	}
++	brq->cmd.opcode = iter_params->write ? writecmd : readcmd;
++
++	/* prepare sbc (set block count) if needed */
++	if ((mmc_op_multi(brq->cmd.opcode) && (!(params->card->quirks & MMC_QUIRK_BLK_NO_CMD23))) ||
++		(params->rel_write && iter_params->write)) {
++		brq->sbc.opcode = MMC_SET_BLOCK_COUNT;
++		brq->sbc.arg = brq->data.blocks;
++		if (params->rel_write && iter_params->write)
++			brq->sbc.arg |= SBC_REL_WRITE_BIT;
++		brq->sbc.flags = MMC_RSP_R1 | MMC_CMD_AC;
++		brq->mrq.sbc = &brq->sbc;
++	}
++}
++
++/** @brief send a read or write mmc request
++ *
++ * @param[in] params description of the request to be prepared
++ * @param[in] iter_params iteration specific parameters of the request
++ * @return 0 if success, errno if an error occurred.
++ *
++ * @see inspired from mmc_blk_mq_issue_rw_rq in block.c
++ */
++static int mmc_refresh_issue_rw_rq(const struct refresh_req_params *params, const struct iteration_params *iter_params)
++{
++	struct mmc_blk_request brq;
++	int err = 0;
++
++	/* prepare the request */
++	mmc_refresh_rw_rq_prep(params, iter_params, &brq);
++	/* Prepare the host for the request */
++	mmc_pre_req(params->card->host, &brq.mrq);
++	/* Send the request and wait for its completion */
++	mmc_wait_for_req(params->card->host, &brq.mrq);
++
++	/* Check errors */
++	if (brq.mrq.sbc != NULL && brq.sbc.error) {
++		dev_err(mmc_dev(params->card->host), "%s: sbc error %d\n",
++						__func__, brq.sbc.error);
++		err = brq.sbc.error;
++	}
++	if (!err && brq.cmd.error) {
++		dev_err(mmc_dev(params->card->host), "%s: cmd error %d\n",
++						__func__, brq.cmd.error);
++		err = brq.cmd.error;
++	}
++	if (!err && brq.data.error) {
++		dev_err(mmc_dev(params->card->host), "%s: data error %d\n",
++						__func__, brq.data.error);
++		err = brq.data.error;
++	}
++	/* Inform the host of the end of the request */
++	mmc_post_req(params->card->host, &brq.mrq, err);
++	return err;
++}
++
++/** @brief allocate a scatter list based on the allocated buffer
++ *
++ * @param[out] sg_ptr pointer which will hold the resulting scatter list if no error occurred.
++ * @param[in] buffer buffer to be mapped on the scatter list
++ * @param[in] size size of the buffer
++ * @return sg_len if success, in case of error a negative error code is returned
++ */
++static int mmc_refresh_alloc_sg(struct scatterlist **sg_ptr, void *buffer, int size)
++{
++	int index;
++	int sg_len = 0;
++	int remaining_size = size;
++	unsigned char *addr = (unsigned char *)buffer;
++	struct scatterlist *sg;
++	/* Compute the sg_len, each sg cannot cross page boundaries. */
++	if (offset_in_page(addr) != 0) {
++		/* Start address of the buffer is not page aligned, account for 1 page and move to the next page boundary */
++		sg_len++;
++		if (remaining_size > (int)(PAGE_SIZE - offset_in_page(addr)))
++			remaining_size -= PAGE_SIZE - offset_in_page(addr);
++		else
++			remaining_size = 0;
++		addr += PAGE_SIZE - offset_in_page(addr);
++	}
++	/* Add number of pages corresponding to the remaining size */
++	sg_len += remaining_size >> PAGE_SHIFT;
++	/* If the remaining_size is not a multiple of page, add an extra page */
++	if (offset_in_page(remaining_size) != 0)
++		sg_len++;
++
++	/* Alloc scatter list and init it */
++	sg = (struct scatterlist *)kmalloc_array(sg_len, sizeof(struct scatterlist), GFP_KERNEL);
++	if (!sg)
++		return -ENOMEM;
++	sg_init_table(sg, sg_len);
++
++	/* fill the scatter list */
++	remaining_size = size;
++	addr = (unsigned char *)buffer;
++	index = 0;
++	while (remaining_size) {
++		int sg_size;
++		/* compute size up to the next boundary or the size of the buffer */
++		if (remaining_size > (int)(PAGE_SIZE - offset_in_page(addr)))
++			sg_size = PAGE_SIZE - offset_in_page(addr);
++		else
++			sg_size = remaining_size;
++		sg_set_buf(&sg[index], addr, sg_size);
++		index++;
++		addr += sg_size;
++		remaining_size -= sg_size;
++	}
++
++	*sg_ptr = sg;
++	return sg_len;
++}
++
++/** @brief internal function for refresh activities
++ *
++ * @param[in/out] parameters and result of the refresh
++ * @return 0 on success, errno in case of error
++ */
++static int __mmc_blk_refresh_function(struct refresh_req_params *params)
++{
++	int ret = 0;
++	unsigned int mem_blocks;
++	unsigned int max_blocks;
++	void *kern_buffer = NULL;
++	struct iteration_params iter_params = {0};
++
++	max_blocks = params->card->host->max_blk_count;
++	if (max_blocks > params->card->host->max_req_size / MMC_BLOCK_SIZE)
++		max_blocks = params->card->host->max_req_size / MMC_BLOCK_SIZE;
++
++	if (params->nb_blocks_per_loop != 0 && max_blocks > params->nb_blocks_per_loop)
++		max_blocks = params->nb_blocks_per_loop;
++
++	pr_debug("%s: Starting refresh at address 0x%08X (blksz: %d, blocks: %d, mode: %d, PAGE_SIZE: %ld, max_blks: 0x%X, rel_write: %d)\n",
++			mmc_hostname(params->card->host), params->block_addr, (int)(MMC_BLOCK_SIZE),
++			params->nb_blocks, params->mode, PAGE_SIZE, max_blocks, params->rel_write);
++
++	/* Read req */
++	mem_blocks = params->nb_blocks;
++	if (mem_blocks > max_blocks)
++		mem_blocks = max_blocks;
++
++	/* Only handle blocks of 4K, to be optimized in the future. */
++	if ((params->mode == MODE_REFRESH_WRITE_SKIP_BLANK) || (params->mode == MODE_REFRESH_WRITE_TRIM_BLANK))
++		mem_blocks = 8;
++	/* Alloc the work buffer and setup the scatter list, in case of failure, no retry and no warning, it is not a good time to do the refresh */
++	kern_buffer = kmalloc(mem_blocks * MMC_BLOCK_SIZE, GFP_KERNEL | GFP_DMA | __GFP_NOWARN | __GFP_NORETRY);
++	if (!kern_buffer) {
++		pr_err("%s: Error allocating memory for refresh (%d blocks)\n", mmc_hostname(params->card->host), mem_blocks);
++		ret = -ENOMEM;
++		goto out;
++	}
++	iter_params.sg_len = mmc_refresh_alloc_sg(&iter_params.sg, kern_buffer, mem_blocks * MMC_BLOCK_SIZE);
++	if (iter_params.sg_len < 0) {
++		ret = iter_params.sg_len;
++		goto out;
++	}
++
++	while (params->remaining_blk > 0) {
++		unsigned int index;
++		bool skip = false;
++
++		iter_params.iter_nb_blocks = mem_blocks;
++		/* if this loop will not cover the full kern_buffer, recompute the scatter list */
++		if (params->remaining_blk < mem_blocks) {
++			iter_params.iter_nb_blocks = params->remaining_blk;
++			/* recompute sg */
++			kfree(iter_params.sg);
++			iter_params.sg = NULL;
++			iter_params.sg_len = mmc_refresh_alloc_sg(&iter_params.sg, kern_buffer, params->remaining_blk * MMC_BLOCK_SIZE);
++			if (iter_params.sg_len < 0) {
++				ret = iter_params.sg_len;
++				goto out;
++			}
++		}
++		iter_params.write = false;
++		ret = mmc_refresh_issue_rw_rq(params, &iter_params);
++		if (ret) {
++			pr_err("%s: Read result @0x%08X/0x%X: %d\n", mmc_hostname(params->card->host), params->block_addr, iter_params.iter_nb_blocks, ret);
++			goto out;
++		}
++
++		/* Prepare the refresh request depending on the mode */
++		switch (params->mode) {
++		case MODE_REFRESH_READ:
++			skip = true;
++			break;
++		case MODE_REFRESH_WRITE_SKIP_BLANK:
++		case MODE_REFRESH_WRITE_TRIM_BLANK:
++			{
++				unsigned int ref_value = 0;
++
++				skip = true;
++				if (params->card->erased_byte != 0)
++					ref_value = 0xFFFFFFFF;
++				for (index = 0; index < iter_params.iter_nb_blocks * MMC_BLOCK_SIZE / sizeof(unsigned int); index++) {
++					if (((unsigned int *)kern_buffer)[index] != ref_value) {
++						skip = false;
++						break;
++					}
++				}
++				if (skip && params->mode == MODE_REFRESH_WRITE_TRIM_BLANK) {
++					/* Trim sector */
++					ret = mmc_erase(params->card, params->block_addr, iter_params.iter_nb_blocks, MMC_TRIM_ARG);
++					if (ret) {
++						pr_err("%s: Discard result @0x%08X/0x%X: %d\n", mmc_hostname(params->card->host),
++							params->block_addr, iter_params.iter_nb_blocks, ret);
++						goto out;
++					}
++				}
++			}
++			break;
++#ifdef EMMC_KPI_MEASUREMENTS
++		case MODE_REFRESH_DEBUG_UNTRIM:
++			untrim_buffer((unsigned int *)kern_buffer, iter_params.iter_nb_blocks, params->card->erased_byte);
++			break;
++		case MODE_REFRESH_DEBUG_WRITE_INC:
++			for (index = 0; index < iter_params.iter_nb_blocks * MMC_BLOCK_SIZE; index++)
++				((unsigned char *)kern_buffer)[index]++;
++			break;
++#endif
++		case MODE_REFRESH_WRITE:
++		default:
++			/* Nothing to do */
++			break;
++		}
++		if (!skip) {
++			/* check if one of the dispatch queue is not empty to interrupt the refresh and process pending requests */
++			if (params->interrupt && mmc_check_queue_content(params->blk_mqueue))
++				goto out;
++
++			/* Write req */
++			iter_params.write = true;
++			ret = mmc_refresh_issue_rw_rq(params, &iter_params);
++			if (ret) {
++				pr_err("%s: Write result @0x%08X/0x%X: %d\n", mmc_hostname(params->card->host),
++					params->block_addr, iter_params.iter_nb_blocks, ret);
++				goto out;
++			}
++		} else
++			params->skip_count += iter_params.iter_nb_blocks;
++
++		params->block_addr += iter_params.iter_nb_blocks;
++		params->remaining_blk -= iter_params.iter_nb_blocks;
++
++		/* check if one of the dispatch queue is not empty to interrupt the refresh and process pending requests */
++		if (params->remaining_blk > 0 && params->interrupt && mmc_check_queue_content(params->blk_mqueue))
++			goto out;
++	}
++out:
++	pr_debug("%s: End of refresh of %d blocks, blocks skipped: %d, remaining blocks: %d\n",
++		mmc_hostname(params->card->host), params->nb_blocks, params->skip_count, params->remaining_blk);
++
++	kfree(iter_params.sg);
++	kfree(kern_buffer);
++
++	return ret;
++}
++
++
++
++/** @brief perform a refresh of the eMMC memory
++ *
++ * It consists of a read (single or multi-block), followed by a write to the same location (for read refresh no write is performed)
++ * This function also handles KPI measurements operation for Trim, Discard, Erase and untrim (fill all blank data with dummy values)
++ *
++ * @param[in/out] params parameters for the refresh
++ * @return negative error code in case of error, 0 if success.
++ */
++int mmc_blk_refresh(struct refresh_req_params *params)
++{
++	int ret = 0;
++	int (*refresh_fnc)(struct refresh_req_params *params) = NULL;
++
++	params->skip_count = 0;
++	params->remaining_blk = params->nb_blocks;
++
++	/* validate parameters */
++	if (params->nb_blocks & (NB_512B_IN_4K-1)) {
++		/* Round-up remaining_blk value to next greater multiple of NB_512B_IN_4K */
++		params->remaining_blk = (params->remaining_blk + (NB_512B_IN_4K-1)) & ~(NB_512B_IN_4K-1);
++		pr_err("%s: refresh number of blocks should be a multiple of 8 (4K blocks) (%d)\n",
++				mmc_hostname(params->card->host), params->nb_blocks);
++		return -EINVAL;
++	}
++
++	if (params->block_addr & (NB_512B_IN_4K-1)) {
++		/* Round remaining_blk value to a multiple of NB_512B_IN_4K */
++		params->block_addr = params->block_addr & ~(NB_512B_IN_4K-1);
++		pr_err("%s: refresh block address should be a multiple of 8 (4K blocks) (%d)\n",
++				mmc_hostname(params->card->host), params->nb_blocks);
++		return -EINVAL;
++	}
++
++	if (params->block_addr + params->nb_blocks > params->card->ext_csd.sectors) {
++		pr_err("%s: Invalid refresh block range %d - %d should be lower than %d\n",
++				mmc_hostname(params->card->host), params->block_addr,
++				params->block_addr + params->nb_blocks, params->card->ext_csd.sectors);
++		if (params->block_addr > params->card->ext_csd.sectors) {
++			params->block_addr = 0;
++		} else {
++			/* Round remaining_blk value to previous valid multiple of NB_512B_IN_4K */
++			params->remaining_blk = (params->card->ext_csd.sectors - params->block_addr) & ~(NB_512B_IN_4K-1);
++		}
++		return -EINVAL;
++	}
++
++	if (params->mode == MODE_REFRESH_READ || params->mode == MODE_REFRESH_WRITE || params->mode == MODE_REFRESH_WRITE_SKIP_BLANK ||
++		params->mode == MODE_REFRESH_WRITE_TRIM_BLANK) {
++		if (params->nb_blocks_per_loop & (NB_512B_IN_4K-1)) {
++			pr_err("%s: refresh maximum number of blocks per loop is not a multiple of 8 (4K blocks) (%d)\n",
++					mmc_hostname(params->card->host), params->nb_blocks_per_loop);
++			return -EINVAL;
++		}
++		refresh_fnc = __mmc_blk_refresh_function;
++	}
++#ifdef EMMC_KPI_MEASUREMENTS
++	else if (params->mode == MODE_REFRESH_DEBUG_WRITE_INC || params->mode == MODE_REFRESH_DEBUG_UNTRIM) {
++		if (params->nb_blocks_per_loop & (NB_512B_IN_4K-1)) {
++			pr_err("%s: refresh maximum number of blocks per loop is not a multiple of 8 (4K blocks) (%d)\n",
++					mmc_hostname(params->card->host), params->nb_blocks_per_loop);
++			return -EINVAL;
++		}
++		refresh_fnc = __mmc_blk_refresh_function;
++	} else if (params->mode == MODE_REFRESH_DEBUG_DISCARD || params->mode == MODE_REFRESH_DEBUG_TRIM ||
++		params->mode == MODE_REFRESH_DEBUG_ERASE)
++		refresh_fnc = __mmc_blk_erase_function;
++#endif
++	else {
++		pr_err("%s: Invalid refresh mode %d\n", mmc_hostname(params->card->host), params->mode);
++		return -EINVAL;
++	}
++
++
++	/* If command queue is enabled, disable it during the refresh */
++	if (params->card->ext_csd.cmdq_en) {
++		ret = mmc_cmdq_disable(params->card);
++		if (ret) {
++			pr_err("%s: Unable to disable the command queue for refresh (%d)\n",
++					mmc_hostname(params->card->host), ret);
++			return ret;
++		}
++	}
++
++	/* perform the refresh */
++	ret = refresh_fnc(params);
++
++	/* Re-enable the command queue after refresh */
++	if (params->card->reenable_cmdq && !params->card->ext_csd.cmdq_en) {
++		int ret_enable = mmc_cmdq_enable(params->card);
++
++		if (ret_enable) {
++			pr_err("%s: Unable to re-activate the command queue after refresh: %d\n", mmc_hostname(params->card->host), ret_enable);
++			if (!ret)
++				ret = ret_enable;
++		}
++	}
++
++	return ret;
++}
++
++
++#ifdef EMMC_KPI_MEASUREMENTS
++/** @brief Fill the blank sectors with a dummy value 0xDEADBEEF
++ *
++ * @param[in] cur_ptr pointer to the current buffer to be checked
++ * @param[in] iter_nb_blocks number of block to be checked
++ * @param[in] erased_byte 0: erase bytes should be reported as 0, other values: erase bytes should be reported as 0xFF
++ */
++static void untrim_buffer(unsigned int *cur_ptr, int iter_nb_blocks, unsigned char erased_byte)
++{
++	int sector;
++	unsigned int index;
++	unsigned int ref_value = 0;
++
++	if (erased_byte != 0)
++		ref_value = 0xFFFFFFFF;
++
++	for (sector = 0; sector < iter_nb_blocks / NB_512B_IN_4K; sector++) {
++		unsigned char blank = true;
++
++		for (index = 0; index < NB_512B_IN_4K * MMC_BLOCK_SIZE / sizeof(unsigned int); index++) {
++			if (cur_ptr[index] != ref_value) {
++				blank = false;
++				break;
++			}
++		}
++		/* Fill blank sectors with dummy data */
++		if (blank) {
++			for (index = 0; index < NB_512B_IN_4K * MMC_BLOCK_SIZE / sizeof(unsigned int); index++)
++				cur_ptr[index] = 0xDEADBEEF;
++		}
++		cur_ptr += NB_512B_IN_4K * MMC_BLOCK_SIZE / sizeof(unsigned int);
++	}
++}
++
++
++/** @brief handling of erase function used for the KPI measurements
++ *
++ * @param[in/out] parameters and result of the refresh
++ * @return 0 on success, errno in case of error
++ */
++static int __mmc_blk_erase_function(struct refresh_req_params *params)
++{
++	int ret = 0;
++
++	pr_debug("%s: Erase command mode %s from block 0x%08X (nb blocks: %d, erase_size: %d)\n",
++		mmc_hostname(params->card->host),
++		params->mode == MODE_REFRESH_DEBUG_DISCARD ? "DISCARD" : params->mode == MODE_REFRESH_DEBUG_TRIM ? "TRIM" : "ERASE",
++		params->block_addr, params->nb_blocks, params->card->erase_size);
++
++	switch (params->mode) {
++	case MODE_REFRESH_DEBUG_DISCARD:
++		if (mmc_can_discard(params->card)) {
++			ret = mmc_erase(params->card, params->block_addr, params->nb_blocks, MMC_DISCARD_ARG);
++			if (ret)
++				pr_err("%s: eMMC discard error %d\n", mmc_hostname(params->card->host), ret);
++		} else {
++			pr_err("%s: eMMC not able to discard\n", mmc_hostname(params->card->host));
++			ret = -EINVAL;
++		}
++		break;
++	case MODE_REFRESH_DEBUG_TRIM:
++		if (mmc_can_trim(params->card)) {
++			ret = mmc_erase(params->card, params->block_addr, params->nb_blocks, MMC_TRIM_ARG);
++			if (ret)
++				pr_err("%s: eMMC trim error %d\n", mmc_hostname(params->card->host), ret);
++		} else {
++			pr_err("%s: eMMC not able to trim\n", mmc_hostname(params->card->host));
++			ret = -EINVAL;
++		}
++		break;
++	case MODE_REFRESH_DEBUG_ERASE:
++		/* Erase should be aligned to erase block size */
++		if (params->block_addr & (params->card->erase_size - 1)) {
++			pr_err("%s: Invalid block addr for erase (%d), erase_size: %d\n",
++				mmc_hostname(params->card->host), params->block_addr, params->card->erase_size);
++			ret = -EINVAL;
++		}
++
++		if (params->nb_blocks & (params->card->erase_size - 1)) {
++			pr_err("%s: Invalid nb_block for erase (%d), erase_size: %d\n",
++				mmc_hostname(params->card->host), params->nb_blocks, params->card->erase_size);
++			ret = -EINVAL;
++		}
++
++		if (!ret) {
++			if (mmc_can_erase(params->card)) {
++				ret = mmc_erase(params->card, params->block_addr, params->nb_blocks, MMC_ERASE_ARG);
++				if (ret)
++					pr_err("%s: eMMC erase error %d\n", mmc_hostname(params->card->host), ret);
++			} else {
++				pr_err("%s: eMMC not able to erase\n", mmc_hostname(params->card->host));
++				ret = -EINVAL;
++			}
++		}
++		break;
++	}
++	/* fill outputs parameters */
++	params->block_addr = params->block_addr + params->nb_blocks;
++	params->remaining_blk = 0;
++
++	return ret;
++}
++#endif
+diff --git a/drivers/mmc/core/refresh.h b/drivers/mmc/core/refresh.h
+new file mode 100644
+index 000000000000..60f942ae7b0c
+--- /dev/null
++++ b/drivers/mmc/core/refresh.h
+@@ -0,0 +1,60 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ *  linux/drivers/mmc/core/refresh.h
++ *
++ *  Copyright 2021 Christophe Drobny (Continental)
++ */
++
++#ifndef _MMC_REFRESH_H
++#define _MMC_REFRESH_H
++
++#include <linux/types.h>
++
++// Enable to perform KPI measurments
++#define EMMC_KPI_MEASUREMENTS
++
++/* Out of range IOCTL */
++#define MMC_DRIVER_REFRESH 65 /* n/a  [31:0] data addr   n/a */
++
++#define MODE_REFRESH_READ		0	/**< Only read selected blocks */
++#define MODE_REFRESH_WRITE		1	/**< read and write all selected blocks */
++#define MODE_REFRESH_WRITE_SKIP_BLANK	2	/**< read and write all selected blocks except the blank ones */
++#define MODE_REFRESH_WRITE_TRIM_BLANK	3	/**< read and write all selected non blank blocks and trim blank ones */
++
++#ifdef EMMC_KPI_MEASUREMENTS
++#define MODE_REFRESH_DEBUG_UNTRIM	0xFB	/**< Write dummy data instead of blank sectors */
++#define MODE_REFRESH_DEBUG_DISCARD	0xFC	/**< Discard part of the eMMC */
++#define MODE_REFRESH_DEBUG_TRIM		0xFD	/**< Trim part of the eMMC */
++#define MODE_REFRESH_DEBUG_ERASE	0xFE	/**< Erase part of the eMMC */
++#define MODE_REFRESH_DEBUG_WRITE_INC	0xFF	/**< read and write all selected blocks (but increment each byte for debug) */
++#endif
++
++#define FLAGS_REL_WRITE_MASK		(1UL<<0)	/**< Reliable write flags in the IOCTL interface */
++#define FLAGS_INTERRUPTABLE_MASK	(1UL<<1)	/**< Interrupt flag in the IOCTL interface */
++
++/** @brief describe the IOCTL input parameters for the refresh */
++struct refresh_ioctl_intf {
++	u32 nb_blocks;				/**< Number of blocks to be processed */
++	u8 mode;				/**< Refresh mode */
++	u8 flags;				/**< Flags for the refresh: Rel Write and Interruptable */
++	u16 nb_blocks_per_loop;			/**< size of blocks processed on each loop */
++};
++
++/** @brief structure to hold the parameters of the refresh request */
++struct refresh_req_params {
++	struct mmc_card *card;			/**< [IN] reference to the card being used */
++	struct request_queue *blk_mqueue;	/**< [IN] reference to the queue holding requests to the eMMC */
++	unsigned char mode;			/**< [IN] mode of the refresh (read/write/write with skip) */
++	unsigned char rel_write;		/**< [IN] Activation of the reliable write */
++	unsigned char interrupt;		/**< [IN] Allow refresh to be interrupted if a new request is ready */
++	unsigned int nb_blocks;			/**< [IN] total number of blocks to be refreshed */
++	unsigned short nb_blocks_per_loop;	/**< [IN] Maximum number of blocks processed at each internal loop [max 1024] */
++	unsigned int block_addr;		/**< [IN/OUT] address of the next block to be refreshed (block size 512 bytes) */
++	unsigned int skip_count;		/**< [OUT] number of blocks skipped during the refresh */
++	unsigned int remaining_blk;		/**< [OUT] number of remaining block to be refreshed */
++};
++
++int mmc_blk_refresh(struct refresh_req_params *params);
++
++#endif /* _MMC_REFRESH_H */
++

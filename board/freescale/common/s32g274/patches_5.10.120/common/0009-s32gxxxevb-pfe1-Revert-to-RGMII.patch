@@ -1,0 +1,52 @@
+From d4909bcf179b0bf601c7bf6a2284b26f5b82e9a0 Mon Sep 17 00:00:00 2001
+From: Joerg Vehlow <joerg.vehlow@aox.de>
+Date: Mon, 25 Jul 2022 10:26:19 +0200
+Subject: [PATCH] s32gxxxaevb/pfe1: Revert to RGMII
+
+With BSP33 NXP changed the network port used for pfe1 on the evb boards
+to the SGMII PHY on the optional PLATEVB-board.
+
+This reverts the configuration back to RGMII PHY shared with gmac.
+
+Upstream-Status: Inappropriate [Custom configuration]
+---
+ arch/arm64/boot/dts/freescale/s32gxxxa-evb.dtsi | 16 ++++++++++++----
+ 1 file changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/freescale/s32gxxxa-evb.dtsi b/arch/arm64/boot/dts/freescale/s32gxxxa-evb.dtsi
+index 8b0499a455f4..642b368d3fb2 100644
+--- a/arch/arm64/boot/dts/freescale/s32gxxxa-evb.dtsi
++++ b/arch/arm64/boot/dts/freescale/s32gxxxa-evb.dtsi
+@@ -77,8 +77,14 @@ &pfe_mdio0 {
+ };
+ 
+ &pfe_mdio1 {
+-	/* unused */
+-	status = "disabled";
++	pinctrl-names = "default";
++	pinctrl-0 = <&pfe1mdioc_pins>;
++	/* KSZ9031RNX on S32G-VNP-PROC */
++	pfe_mdio_c_phy4: ethernet-phy@4 {
++		#address-cells = <1>;
++		#size-cells = <0>;
++		reg = <4>;
++	};
+ };
+ 
+ &pfe_mdio2 {
+@@ -105,8 +111,10 @@ pfe_mdio_a_phy7: ethernet-phy@7 {
+ };
+ 
+ &pfe_netif1 {
+-	phy-mode = "sgmii";
+-	phy-handle = <&gmac_mdio_c_phy1>;
++	phy-mode = "rgmii-id";
++    phy-handle = <&pfe_mdio_c_phy4>;
++    pinctrl-names = "default";
++    pinctrl-0 = <&pfe1rgmiic_pins>;
+ };
+ 
+ &pfe_netif2 {
+-- 
+2.25.1
+

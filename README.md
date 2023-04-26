@@ -1,2 +1,2 @@
 # externals
-externals/
+buildroot externals recipies 

@@ -1,0 +1,115 @@
+From 8477043075ae09f163be08a33ead4690cbdacbf1 Mon Sep 17 00:00:00 2001
+From: Vigneshwaran K <Vigneshwaran.Karunanithi@aox.de>
+Date: Wed, 31 Aug 2022 11:23:31 +0000
+Subject: [PATCH 1/7] add bootconfig support for internal/embedded initrd
+
+Signed-off-by: Vigneshwaran K <vigneshwaran.karunanithi@aox.de>
+Upstream-Status: Inappropriate [custom device configuration]
+---
+ init/main.c | 47 ++++++++++++++++++++++++++++++++++++-----------
+ 1 file changed, 36 insertions(+), 11 deletions(-)
+
+diff --git a/init/main.c b/init/main.c
+index 4fe58ed4aca7..0c1a14970140 100644
+--- a/init/main.c
++++ b/init/main.c
+@@ -264,17 +264,18 @@ static int __init loglevel(char *str)
+ early_param("loglevel", loglevel);
+ 
+ #ifdef CONFIG_BLK_DEV_INITRD
+-static void * __init get_boot_config_from_initrd(u32 *_size, u32 *_csum)
++static void * __init get_boot_config_from_initrd(unsigned long start_addr,
++			unsigned long end_addr, u32 *_size, u32 *_csum)
+ {
+ 	u32 size, csum;
+ 	char *data;
+ 	u32 *hdr;
+ 	int i;
+ 
+-	if (!initrd_end)
++	if (!end_addr)
+ 		return NULL;
+ 
+-	data = (char *)initrd_end - BOOTCONFIG_MAGIC_LEN;
++	data = (char *)end_addr - BOOTCONFIG_MAGIC_LEN;
+ 	/*
+ 	 * Since Grub may align the size of initrd to 4, we must
+ 	 * check the preceding 3 bytes as well.
+@@ -292,14 +293,12 @@ static void * __init get_boot_config_from_initrd(u32 *_size, u32 *_csum)
+ 	csum = le32_to_cpu(hdr[1]);
+ 
+ 	data = ((void *)hdr) - size;
+-	if ((unsigned long)data < initrd_start) {
++	if ((unsigned long)data < start_addr) {
+ 		pr_err("bootconfig size %d is greater than initrd size %ld\n",
+-			size, initrd_end - initrd_start);
++			size, end_addr - start_addr);
+ 		return NULL;
+ 	}
+ 
+-	/* Remove bootconfig from initramfs/initrd */
+-	initrd_end = (unsigned long)data;
+ 	if (_size)
+ 		*_size = size;
+ 	if (_csum)
+@@ -308,7 +307,8 @@ static void * __init get_boot_config_from_initrd(u32 *_size, u32 *_csum)
+ 	return data;
+ }
+ #else
+-static void * __init get_boot_config_from_initrd(u32 *_size, u32 *_csum)
++static void * __init get_boot_config_from_initrd(unsigned long start_addr,
++			unsigned long end_addr, u32 *_size, u32 *_csum)
+ {
+ 	return NULL;
+ }
+@@ -412,11 +412,36 @@ static void __init setup_boot_config(const char *cmdline)
+ 	const char *msg;
+ 	int pos;
+ 	u32 size, csum;
+-	char *data, *copy, *err;
++	char *data = NULL, *copy, *err, *data_embedded;
+ 	int ret;
++	u32 size_tmp, csum_tmp;
+ 
+ 	/* Cut out the bootconfig data even if we have no bootconfig option */
+-	data = get_boot_config_from_initrd(&size, &csum);
++	if (initrd_end) {/* avoid unwanted call switch and return */
++		data = get_boot_config_from_initrd(initrd_start,
++				initrd_end, &size, &csum);
++		if (data)
++			initrd_end = (unsigned long)data;
++	}
++	/* check embedded initrd is available */
++	if (__initramfs_size) {
++		data_embedded = get_boot_config_from_initrd(
++				(unsigned long)__initramfs_start,
++				((unsigned long)__initramfs_start +
++				__initramfs_size), &size_tmp,
++				&csum_tmp);
++		if (data_embedded) {
++			__initramfs_size = (unsigned long)data_embedded -
++				(unsigned long)__initramfs_start;
++		}
++
++		/* select which bootcfg (from internal/exteranl initrd) */
++		if (!data) {
++			data = data_embedded;
++			size = size_tmp;
++			csum = csum_tmp;
++		}
++	}
+ 
+ 	strlcpy(tmp_cmdline, boot_command_line, COMMAND_LINE_SIZE);
+ 	err = parse_args("bootconfig", tmp_cmdline, NULL, 0, 0, 0, NULL,
+@@ -476,7 +501,7 @@ static void __init setup_boot_config(const char *cmdline)
+ static void __init setup_boot_config(const char *cmdline)
+ {
+ 	/* Remove bootconfig data from initrd */
+-	get_boot_config_from_initrd(NULL, NULL);
++	get_boot_config_from_initrd(0, 0, NULL, NULL);
+ }
+ 
+ static int __init warn_bootconfig(char *str)
+-- 
+2.17.1
+

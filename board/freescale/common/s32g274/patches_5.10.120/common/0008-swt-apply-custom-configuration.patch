@@ -1,0 +1,53 @@
+From 693b4f83ed9a7e32356b22fa638499514ed62837 Mon Sep 17 00:00:00 2001
+From: Raman Tunik <raman.tunik@aox.de>
+Date: Thu, 5 May 2022 15:44:23 +0200
+Subject: [PATCH] swt: apply custom configuration
+
+Clear RIA bit in Control Register (CR) to generate a bus error on invalid access;
+Set ITR bit in CR to generate an interrupt on an initial timeout;
+Set STP bit in CR to stop the timer in Standby mode.
+
+Signed-off-by: Raman Tunik <raman.tunik@aox.de>
+
+Upstream-Status: Inappropriate [custom device configuration]
+---
+ drivers/watchdog/sac58r_wdt.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/watchdog/sac58r_wdt.c b/drivers/watchdog/sac58r_wdt.c
+index 0ca979a79447..e44624837d2b 100644
+--- a/drivers/watchdog/sac58r_wdt.c
++++ b/drivers/watchdog/sac58r_wdt.c
+@@ -31,6 +31,8 @@
+ 
+ #define SAC58R_SWT_CR		0x00		/* Control Register */
+ #define SAC58R_SWT_CR_FIXED_SS	(0 << 9)	/* Fixed Service Sequence */
++#define SAC58R_SWT_CR_RIA	(1 << 8)	/* Reset on Invalid Access */
++#define SAC58R_SWT_CR_ITR	(1 << 6)	/* Interrupt Then Reset Request */
+ #define SAC58R_SWT_CR_STP	(1 << 2)	/* Stop Mode Control */
+ #define SAC58R_SWT_CR_FRZ	(1 << 1)	/* Debug Mode Control */
+ #define SAC58R_SWT_CR_WEN	(1 << 0)	/* Watchdog Enable */
+@@ -137,6 +139,11 @@ static void sac58r_wdt_setup(struct watchdog_device *wdog)
+ 	if (!(wdev->flags & SAC58R_CONTINUE_IN_STBY))
+ 		val |= SAC58R_SWT_CR_STP;
+ 
++	/* Generate a bus error on invalid access */
++	val &= ~SAC58R_SWT_CR_RIA;
++	/* Generate an interrupt on initial timeout */
++	val |= SAC58R_SWT_CR_ITR;
++	/* Stop the timer in debug mode */
+ 	val |= SAC58R_SWT_CR_FRZ;
+ 	/* Use Fixed Service Sequence to ping the watchdog */
+ 	val |= SAC58R_SWT_CR_FIXED_SS;
+@@ -292,7 +299,7 @@ static void sac58r_wdt_shutdown(struct platform_device *pdev)
+ }
+ 
+ static const struct sac58r_data s32gen1_data = {
+-	.flags = SAC58R_CONTINUE_IN_STBY,
++	.flags = 0,
+ };
+ 
+ static const struct of_device_id sac58r_wdt_dt_ids[] = {
+-- 
+2.25.1
+

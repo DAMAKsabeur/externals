@@ -1,0 +1,11 @@
+--- a/drivers/watchdog/sac58r_wdt.c
++++ b/drivers/watchdog/sac58r_wdt.c
+@@ -239,6 +239,8 @@
+ 	if (wdog->timeout != timeout)
+ 		dev_warn(&pdev->dev, "timeout out of range! Clamped from %u to %u\n",
+ 			timeout, wdog->timeout);
++    /* use default timeout if not specified in device tree as "timeout-sec" */
++    watchdog_init_timeout(wdog, 0, &pdev->dev);
+ 
+ 	timer_setup(&wdev->timer, sac58r_wdt_timer_ping, 0);
+ 

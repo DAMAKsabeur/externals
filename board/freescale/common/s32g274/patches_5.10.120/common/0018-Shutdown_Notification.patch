@@ -1,0 +1,1574 @@
+From a8acf186a3bb63888aa5cedf842bde0a18375cad Mon Sep 17 00:00:00 2001
+From: Sabeur DAMAK <sabeur.damak-ext@continental-corporation.com>
+Date: Tue, 21 Feb 2023 13:56:28 +0100
+Subject: [PATCH] xx ff dd
+
+---
+ arch/arm64/boot/dts/freescale/hper_gen2.dts   | 113 +++
+ .../boot/dts/freescale/hper_gen2_common.dts   | 303 ++++++++
+ .../boot/dts/freescale/hper_gen2_slave.dts    |  67 ++
+ drivers/misc/Kconfig                          |   5 +
+ drivers/misc/Makefile                         |   1 +
+ drivers/misc/shutdown-notification.c          | 100 +++
+ include/dt-bindings/pinctrl/hpe-pinctrl.h     | 674 ++++++++++++++++++
+ include/linux/SRAM_address.h                  | 230 ++++++
+ 8 files changed, 1493 insertions(+)
+ create mode 100755 arch/arm64/boot/dts/freescale/hper_gen2.dts
+ create mode 100755 arch/arm64/boot/dts/freescale/hper_gen2_common.dts
+ create mode 100755 arch/arm64/boot/dts/freescale/hper_gen2_slave.dts
+ create mode 100644 drivers/misc/shutdown-notification.c
+ create mode 100644 include/dt-bindings/pinctrl/hpe-pinctrl.h
+ create mode 100644 include/linux/SRAM_address.h
+
+diff --git a/arch/arm64/boot/dts/freescale/hper_gen2.dts b/arch/arm64/boot/dts/freescale/hper_gen2.dts
+new file mode 100755
+index 000000000..a669ad8c6
+--- /dev/null
++++ b/arch/arm64/boot/dts/freescale/hper_gen2.dts
+@@ -0,0 +1,113 @@
++/*
++ * Copyright 2019-2020 NXP
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ */
++
++/dts-v1/;
++#include "hper_gen2_common.dts"
++
++/* For PFE master, expect that IPL has initialized the serdes. */
++&serdes0 {
++	status = "disabled";
++};
++
++&serdes1 {
++	status = "disabled";
++};
++
++&llce {
++	status = "disabled";
++};
++
++&pfe_netif1 {
++	status = "okay";
++	fsl,pfeng-hif-channel = <1>;
++	phy-mode = "rgmii";
++	phy-handle = <&mdio_phy0>;
++	pinctrl-names = "default";
++};
++
++
++&pfe_netif2 {
++	status = "okay";
++	fsl,pfeng-hif-channel = <2>;
++	phy-mode = "sgmii";
++	phy-handle = <&mdio_phy1>;
++};
++
++&pfe_mdio1 {
++	/* used by USB ULPI */
++	status = "okay";
++	pinctrl-names = "default";
++	/* TI DP83TG720R PHY 0 */
++	mdio_phy0: ethernet-phy@0 {
++		#address-cells = <1>;
++		#size-cells = <0>;
++		reg = <0>;
++	};
++	/* TI DP83TG720S PHY 1 */
++	mdio_phy1: ethernet-phy@1 {
++		#address-cells = <1>;
++		#size-cells = <0>;
++		reg = <4>;
++	};
++	/* TI DP83TG720R PHY 2 */
++	mdio_phy2: ethernet-phy@2 {
++		#address-cells = <1>;
++		#size-cells = <0>;
++		reg = <8>;
++	};
++	/* TI DP83TG720R PHY 3 */
++	mdio_phy3: ethernet-phy@3 {
++		#address-cells = <1>;
++		#size-cells = <0>;
++		reg = <12>;
++	};
++};
++
++&pfe_mdio2 {
++	/* used by USB ULPI */
++	status = "disabled";
++};
++
++&qspi {
++	status = "okay";
++	spi-max-frequency = <133333333>;
++
++	mx25um25645g@0 {
++		#address-cells = <1>;
++		#size-cells = <1>;
++		compatible = "jedec,spi-nor";
++		spi-max-frequency = <133333333>;
++		spi-tx-bus-width = <8>;
++		spi-rx-bus-width = <8>;
++		reg = <0>;
++	};
++};
++
++&i2c3 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&i2c3_pins>;
++	status = "okay";
++
++	rtl9072a: rtlswitch@84 {
++		compatible = "rlt,RTL9072A";
++		reg = <0x54>;
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		port-8 {
++			reg = <8>;
++			phy-handle = <&mdio_phy2>;
++		};
++
++		port-9 {
++			reg = <9>;
++			phy-handle = <&mdio_phy3>;
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/freescale/hper_gen2_common.dts b/arch/arm64/boot/dts/freescale/hper_gen2_common.dts
+new file mode 100755
+index 000000000..06395922a
+--- /dev/null
++++ b/arch/arm64/boot/dts/freescale/hper_gen2_common.dts
+@@ -0,0 +1,303 @@
++/*
++ * Copyright 2019-2020 NXP
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ */
++
++/dts-v1/;
++#include "s32g.dtsi"
++#include <dt-bindings/gpio/gpio.h>
++
++
++/ {
++	model = "Freescale S32G274";
++	compatible = "fsl,s32g274-simu", "fsl,s32g274",
++				 "arm,vexpress,v2p-aarch64", "arm,vexpress";
++
++	chosen {
++		stdout-path = "serial0:115200n8";
++	};
++
++	memory_DDR0@80000000 {
++			device_type = "memory";
++			reg = <0 0x80000000 0 0x40000000>;
++	};
++
++	memory_DDR1@c0000000 {
++			device_type = "memory";
++			reg = <0 0xc0000000 0 0x40000000>;
++	};
++
++	reserved-memory {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++	};
++
++
++	pwm {
++			status = "disabled";
++	};
++
++	src: src@4007C000 {
++		compatible = "fsl,s32g-tmu-src", "syscon";
++		reg = <0x0 0x4007C000 0x0 0x1000>;
++		#reset-cells = <1>;
++		status = "okay";
++	};
++
++};
++
++&pfe_reserved_bmu2 {
++	reg = <0 0x83000000 0 0x80000>;
++};
++
++&pfe_reserved_rt {
++	reg = <0 0x83080000 0 0x20000>;
++};
++
++
++/* For EB Linux 2.21 PFE master, keep serdes initialisation from boot */
++&serdes0 {
++	status = "disabled";
++};
++&serdes1 {
++	status = "disabled";
++};
++
++&pfe {
++	status = "okay";
++};
++
++&pfe_netif0 {
++	status = "okay";
++	fsl,pfeng-hif-channel = <0>;
++	phy-mode = "sgmii";
++	fixed-link {
++		speed = <1000>;
++		full-duplex;
++	};
++};
++
++
++&pfe_mdio0 {
++	/* used by USB ULPI */
++	status = "disabled";
++};
++
++&gmac0 {
++	status = "disabled";
++};
++
++&generic_timer {
++	clock-frequency = <5000000>;
++};
++
++&i2c0 {
++	pinctrl-names = "default", "gpio";
++	pinctrl-0 = <&i2c0_pins>;
++	pinctrl-1 = <&i2c0_gpio_pins>;
++	scl-gpios = <&gpio 17 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
++	sda-gpios = <&gpio 16 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
++	status = "okay";
++	eepromi2c0: eeprom@50 {
++		compatible = "atmel,24c02";
++		reg = <50>;
++	};
++};
++
++&i2c2 {
++	status = "disabled";
++};
++
++&i2c4 {
++	pinctrl-names = "default", "gpio";
++	pinctrl-0 = <&i2c4_pins>;
++	pinctrl-1 = <&i2c4_gpio_pins>;
++	scl-gpios = <&gpio 34 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
++	sda-gpios = <&gpio 33 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
++	status = "okay";
++};
++
++&usdhc0 {
++	status = "okay";
++};
++
++
++&stm0 {
++	status = "okay";
++};
++
++&stm1 {
++	status = "okay";
++};
++
++&stm2 {
++	status = "okay";
++};
++
++&stm7 {
++	status = "okay";
++};
++
++&fccu {
++	status = "okay";
++};
++
++&swt3 {
++	status = "okay";
++	timeout-sec = <15>;
++};
++
++&swt4 {
++	status = "okay";
++};
++
++&swt5 {
++	status = "okay";
++};
++
++&swt6 {
++	status = "okay";
++};
++
++&pit0 {
++	status = "okay";
++};
++
++&pit1 {
++	status = "okay";
++};
++
++&pinctrl {
++	status = "okay";
++	// I2C0 connected to EEPROM
++	i2c0_pins: i2c0 {
++ 		i2c0_grp0 {
++			pinmux = <S32CC_PINMUX(16, FUNC1)>,
++				 <S32CC_PINMUX(17, FUNC1)>;
++			drive-open-drain;
++			output-enable;
++			input-enable;
++			slew-rate = <S32CC_SLEW_83MHZ>;
++		};
++
++		i2c0_grp1 {
++			pinmux = <S32CC_PINMUX(565, FUNC2)>,
++				 <S32CC_PINMUX(566, FUNC2)>;
++		};
++
++	};
++
++	i2c0_gpio_pins: i2c0_gpio {
++		i2c0_gpio_grp0 {
++			pinmux = <S32CC_PINMUX(16, FUNC0)>,
++				 <S32CC_PINMUX(17, FUNC0)>;
++			drive-open-drain;
++			output-enable;
++			slew-rate = <S32CC_SLEW_208MHZ>;
++		};
++
++		i2c0_gpio_grp1 {
++			pinmux = <S32CC_PINMUX(565, FUNC0)>,
++				 <S32CC_PINMUX(566, FUNC0)>;
++		};
++
++	};
++
++	i2c3_pins: i2c3 {
++		i2c3_grp0 {
++				pinmux = <S32CC_PINMUX(79, FUNC3)>, <S32CC_PINMUX(82, FUNC3)>;
++				drive-open-drain;
++				output-enable;
++				input-enable;
++				slew-rate = <S32CC_SLEW_83MHZ>;
++		};
++
++		i2c3_grp1 {
++				pinmux = <S32CC_PINMUX(721, FUNC5)>,
++					 <S32CC_PINMUX(722, FUNC3)>;
++		};
++	};
++
++	i2c3_gpio_pins: i2c3_gpio {
++		i2c3_gpio_grp0 {
++				pinmux = <S32CC_PINMUX(29, FUNC0)>,
++					 <S32CC_PINMUX(30, FUNC0)>;
++				drive-open-drain;
++				output-enable;
++				slew-rate = <S32CC_SLEW_208MHZ>;
++		};
++
++		i2c4_gpio_grp1 {
++				pinmux = <S32CC_PINMUX(721, FUNC0)>,
++					 <S32CC_PINMUX(722, FUNC0)>;
++		};
++
++	};
++
++
++	i2c4_pins: i2c4 {
++		i2c4_grp0 {
++			pinmux = <S32CC_PINMUX(33, FUNC1)>;
++			drive-open-drain;
++			output-enable;
++			input-enable;
++			slew-rate = <S32CC_SLEW_83MHZ>;
++		};
++
++		i2c4_grp1 {
++			pinmux = <S32CC_PINMUX(724, FUNC3)>,
++				 <S32CC_PINMUX(723, FUNC3)>;
++		};
++
++		i2c4_grp2 {
++			pinmux = <S32CC_PINMUX(34, FUNC2)>;
++			drive-open-drain;
++			output-enable;
++			input-enable;
++			slew-rate = <S32CC_SLEW_83MHZ>;
++		};
++
++	};
++
++	i2c4_gpio_pins: i2c4_gpio {
++		i2c4_gpio_grp0 {
++			pinmux = <S32CC_PINMUX(33, FUNC0)>,
++				 <S32CC_PINMUX(34, FUNC0)>;
++			drive-open-drain;
++			output-enable;
++			slew-rate = <S32CC_SLEW_208MHZ>;
++		};
++
++		i2c4_gpio_grp1 {
++			pinmux = <S32CC_PINMUX(724, FUNC0)>,
++				 <S32CC_PINMUX(723, FUNC0)>;
++		};
++
++	};
++};
++
++&edma0 {
++	status = "okay";
++};
++
++&edma1 {
++	status = "okay";
++};
++
++&spi0 {
++	status = "disabled";
++};
++
++
++&pcie0 {
++	status = "disabled";
++};
++
++&pcie1 {
++	status = "disabled";
++};
+diff --git a/arch/arm64/boot/dts/freescale/hper_gen2_slave.dts b/arch/arm64/boot/dts/freescale/hper_gen2_slave.dts
+new file mode 100755
+index 000000000..1fe6ebbff
+--- /dev/null
++++ b/arch/arm64/boot/dts/freescale/hper_gen2_slave.dts
+@@ -0,0 +1,67 @@
++/*
++ * Copyright 2019-2020 NXP
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ */
++
++/dts-v1/;
++#include "hper_gen2.dts"
++#include "s32g-pfe-slave.dtsi"
++
++&pfe {
++	status = "disabled"; 
++};
++
++&pfe_slave {
++	status = "okay";
++	interrupts = <GIC_SPI 192 IRQ_TYPE_EDGE_RISING>;
++        interrupt-names = "hif2";
++        nxp,pfeng-hif-channels = <PFE_HIF_CHANNEL_2>;
++        nxp,pfeng-ihc-channel = <PFE_HIF_CHANNEL_2>;
++	nxp,pfeng-master-channel = <PFE_HIF_CHANNEL_0>;
++};
++
++
++/* Pre-configured network interfaces */
++
++&pfesl_netif0 {
++	status = "disabled";
++};
++
++&pfesl_netif1 {
++	status = "disabled";
++};
++
++&pfesl_netif2 {
++	status = "disabled";
++};
++
++&pfesl_aux0 {
++	status = "okay";
++	nxp,pfeng-if-name = "pfe2";
++	fsl,pfeng-if-name = "pfe2";
++	nxp,pfeng-hif-channels = <PFE_HIF_CHANNEL_2>;
++};
++
++&i2c0 {
++	status = "disabled";
++};
++
++&i2c2 {
++	status = "disabled";
++};
++
++&i2c3 {
++	status = "disabled";
++};
++
++&i2c4 {
++	status = "disabled";
++};
++
++&qspi {
++	status = "disabled";
++};
+diff --git a/drivers/misc/Kconfig b/drivers/misc/Kconfig
+index 73dfc8337..7e6320bb2 100644
+--- a/drivers/misc/Kconfig
++++ b/drivers/misc/Kconfig
+@@ -475,6 +475,11 @@ config HISI_HIKEY_USB
+ 	  switching between the dual-role USB-C port and the USB-A host ports
+ 	  using only one USB controller.
+ 
++config SHUTDOWN_NOTIFICATION
++	bool "Shutdown notification device driver"
++	help
++	  Notifies Metha via SRAM that LNX is now safe to shutdown.
++
+ source "drivers/misc/c2port/Kconfig"
+ source "drivers/misc/eeprom/Kconfig"
+ source "drivers/misc/cb710/Kconfig"
+diff --git a/drivers/misc/Makefile b/drivers/misc/Makefile
+index c26272f75..52ff7bd81 100644
+--- a/drivers/misc/Makefile
++++ b/drivers/misc/Makefile
+@@ -58,4 +58,5 @@ obj-$(CONFIG_UACCE)		+= uacce/
+ obj-$(CONFIG_XILINX_SDFEC)	+= xilinx_sdfec.o
+ obj-$(CONFIG_HISI_HIKEY_USB)	+= hisi_hikey_usb.o
+ obj-$(CONFIG_FCCU)	+= fccu/
++obj-$(CONFIG_SHUTDOWN_NOTIFICATION)	+= shutdown-notification.o
+ obj-$(CONFIG_STM_BASELINE_CLK) += stm_baseline_clk.o
+diff --git a/drivers/misc/shutdown-notification.c b/drivers/misc/shutdown-notification.c
+new file mode 100644
+index 000000000..a914116cf
+--- /dev/null
++++ b/drivers/misc/shutdown-notification.c
+@@ -0,0 +1,100 @@
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/kobject.h>
++#include <linux/string.h>
++#include <linux/ioport.h>
++#include <linux/io.h>
++#include <linux/notifier.h>
++#include <linux/reboot.h>
++#include <linux/SRAM_address.h>
++
++#define SRAM_ADDR HPCGEN2_SRAM_PENTA_SHUTDOWN_PATTERN_START_ADDRESS
++#define SRAM_SIZE HPCGEN2_SRAM_PENTA_SHUTDOWN_PATTERN_SIZE
++#define SRAM_OFFSET 0x00
++#define DEVICE_NAME "shutdown-notification"
++#define MAGIC_WORD "shutdown"
++#define SRAM_INIT 0xFFFFFFFFFFFFFFFF
++#define SRAM_PATTERN 0x5C3A5C3A5C3A5C3A
++
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Elektrobit - Paulo Moreira");
++MODULE_DESCRIPTION("shutdown notification driver in sysfs (/sys/kernel/shutdown/notification)");
++
++static struct kobject *notification_kobj;
++void* shm;
++
++static int shutdown_notification_metha_notifier(struct notifier_block *nb, unsigned long action, void *data) {
++	iowrite64(SRAM_PATTERN, shm); //Shutdown
++	printk(KERN_INFO "shutdown-notification - Shutdown notifier sent to Metha\n");
++	return NOTIFY_OK;
++}
++
++static struct notifier_block reboot_notifier = {
++	.notifier_call = shutdown_notification_metha_notifier,
++	.next = NULL,
++	.priority = 0,
++};
++
++static ssize_t notification_show(struct kobject *kobj, struct kobj_attribute *attr, char *buffer) {
++	unsigned long memory_value = ioread64(shm);
++
++	printk(KERN_INFO "shutdown-notification - SRAM current byte=%#lX\n", memory_value);
++	return 0;
++}
++
++static ssize_t notification_store(struct kobject *kobj, struct kobj_attribute *attr, const char *buffer, size_t count) {
++	int result = strncmp(buffer, MAGIC_WORD, 8);	
++	
++	if (result == 0){
++		printk(KERN_INFO "shutdown-notification - notification sent\n");
++		iowrite64(SRAM_PATTERN, shm); //Shutdown
++	}
++	else {
++		iowrite64(SRAM_INIT, shm);
++		printk(KERN_INFO "shutdown-notification - SRAM position re-initialized with 0xFFFFFFFFFFFFFFFF\n");
++	}
++
++	return count;
++}
++
++static struct kobj_attribute notification_attr = __ATTR(notification, 0660, notification_show, notification_store);
++
++static int __init shutdown_notification_init(void) {
++	register_reboot_notifier(&reboot_notifier);
++    	printk(KERN_INFO "shutdown-notification - Reboot notifier registered\n");+
++
++	printk(KERN_INFO "shutdown-notification - Creating /sys/kernel/shutdown/notification\n");
++
++	notification_kobj = kobject_create_and_add("shutdown", kernel_kobj);
++	if(!notification_kobj) {
++		printk(KERN_INFO "shutdown-notification - Error creating /sys/kernel/shutdown\n");
++		return -ENOMEM;
++	}
++
++	if(sysfs_create_file(notification_kobj, &notification_attr.attr)) {
++		printk(KERN_INFO "shutdown-notification - Error creating /sys/kernel/shutdown/notification\n");
++		kobject_put(notification_kobj);
++		return -ENOMEM;
++	}
++
++	if(request_mem_region( SRAM_ADDR + SRAM_OFFSET, SRAM_SIZE, DEVICE_NAME ) == NULL ) {
++    		printk(KERN_INFO "shutdown-notification - Error reserving memory address :%s: unable to obtain I/O memory address 0x%08llX\n", DEVICE_NAME, SRAM_ADDR + SRAM_OFFSET);
++	       	return -EBUSY;
++  	}
++
++	shm = ioremap(SRAM_ADDR + SRAM_OFFSET, SRAM_SIZE);
++	iowrite64(SRAM_INIT, shm);
++
++	printk(KERN_INFO "shutdown-notification - SRAM position initialized with 0xFFFFFFFFFFFFFFFF\n");
++
++	return 0;
++}
++
++static void __exit shutdown_notification_exit(void) {
++	printk(KERN_INFO "shutdown-notification - Deleting files\n");
++	sysfs_remove_file(notification_kobj, &notification_attr.attr);
++	kobject_put(notification_kobj);
++}
++
++module_init(shutdown_notification_init);
++module_exit(shutdown_notification_exit);
+diff --git a/include/dt-bindings/pinctrl/hpe-pinctrl.h b/include/dt-bindings/pinctrl/hpe-pinctrl.h
+new file mode 100644
+index 000000000..8d2d1550f
+--- /dev/null
++++ b/include/dt-bindings/pinctrl/hpe-pinctrl.h
+@@ -0,0 +1,674 @@
++/*
++ * Copyright 2018-2020 NXP
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ */
++
++#ifndef __DT_BINDINGS_HPE_PINCTRL_H__
++#define __DT_BINDINGS_HPE_PINCTRL_H__
++/* Reference manuals used to build this pinctrl table */
++/* RM S32G2xx - Rev1 Draft F
++*/
++
++/*
++ * Use to set PAD control
++ */
++#include "s32-gen1-pinctrl.h"
++
++/* UART configuration */
++#define PAD_CTL_UART_TX		(PAD_CTL_SRE_100MHZ | PAD_CTL_OBE | \
++				 PAD_CTL_SRC_SIG_SEL2)
++#define PAD_CTL_UART_RX_MSCR    (PAD_CTL_IBE)
++#define PAD_CTL_UART_RX_IMCR    (PAD_CTL_SRC_SIG_SEL4)
++
++/* CAN configuration */
++#define PAD_CTL_CAN_TX_MSCRx		(PAD_CTL_SRE_100MHZ | PAD_CTL_OBE)
++#define PAD_CTL_CAN_RX_MSCR		(PAD_CTL_IBE)
++#define PAD_CTL_CAN_RX_IMCR		(PAD_CTL_SRC_SIG_SEL2)
++
++/* USDHC configuration  */
++#define PAD_CTL_USDHC_BASE      (PAD_CTL_SRE_208MHZ | PAD_CTL_OBE | \
++				 PAD_CTL_PUE | PAD_CTL_PUS | PAD_CTL_IBE)
++
++#define PAD_CTL_USDHC		(PAD_CTL_USDHC_BASE | PAD_CTL_SRC_SIG_SEL1)
++
++
++/* QSPI configuration  */
++#define PAD_CTL_QSPI_BASE		(PAD_CTL_SRE_208MHZ | PAD_CTL_OBE | \
++					 PAD_CTL_IBE)
++#define PAD_CTL_QSPI_CLK_BASE		(PAD_CTL_SRE_208MHZ | PAD_CTL_OBE)
++#define PAD_CTL_QSPI_CK2_MUX		PAD_CTL_SRC_SIG_SEL1
++#define PAD_CTL_QSPI_A_SCK_MUX		PAD_CTL_SRC_SIG_SEL1
++#define PAD_CTL_QSPI_B_SCK_MUX		PAD_CTL_SRC_SIG_SEL2
++#define PAD_CTL_QSPI_A_CS0_MUX		PAD_CTL_SRC_SIG_SEL1
++#define PAD_CTL_QSPI_B_CS0_MUX		PAD_CTL_SRC_SIG_SEL2
++#define PAD_CTL_QSPI_A_CS1_MUX		PAD_CTL_SRC_SIG_SEL1
++#define PAD_CTL_QSPI_B_CS1_MUX		PAD_CTL_SRC_SIG_SEL2
++#define PAD_CTL_QSPI_A_DQS		(PAD_CTL_SRE_208MHZ | \
++					 PAD_CTL_IBE | PAD_CTL_OBE | \
++					 PAD_CTL_PUE)
++#define PAD_CTL_QSPI_A_DATA0_7    (PAD_CTL_QSPI_BASE | PAD_CTL_SRC_SIG_SEL1)
++#define PAD_CTL_QSPI_B_DATA0_7    (PAD_CTL_QSPI_BASE | PAD_CTL_SRC_SIG_SEL2)
++
++/* EIRQ configuration */
++#define PAD_CTL_EIRQ_2			PAD_CTL_SRC_SIG_SEL2
++#define PAD_CTL_EIRQ_3			PAD_CTL_SRC_SIG_SEL3
++
++/* I2C0 - Serial Data Input */
++#define PAD_CTL_I2C0_MSCR_SDA   (PAD_CTL_SRC_SIG_SEL1 | PAD_CTL_OBE | \
++				 PAD_CTL_IBE | PAD_CTL_ODE)
++#define PAD_CTL_I2C0_IMCR_SDA   (PAD_CTL_SRC_SIG_SEL2)
++
++/* I2C0 - Serial Clock Input */
++#define  PAD_CTL_I2C0_MSCR_SCLK (PAD_CTL_SRC_SIG_SEL1 | PAD_CTL_OBE | \
++				 PAD_CTL_IBE | PAD_CTL_ODE)
++#define PAD_CTL_I2C0_IMCR_SCLK  (PAD_CTL_SRC_SIG_SEL2)
++
++/* I2C1 - Serial Data Input */
++#define PAD_CTL_I2C1_MSCR_SDA   (PAD_CTL_SRC_SIG_SEL1 | PAD_CTL_OBE | \
++				 PAD_CTL_IBE | PAD_CTL_ODE)
++#define PAD_CTL_I2C1_IMCR_SDA   (PAD_CTL_SRC_SIG_SEL2)
++
++/* I2C1 - Serial Clock Input */
++#define  PAD_CTL_I2C1_MSCR_SCLK (PAD_CTL_SRC_SIG_SEL1 | PAD_CTL_OBE | \
++				 PAD_CTL_IBE | PAD_CTL_ODE)
++#define PAD_CTL_I2C1_IMCR_SCLK  (PAD_CTL_SRC_SIG_SEL2)
++
++/* I2C2 - Serial Data Input */
++#define PAD_CTL_I2C2_MSCR_SDA   (PAD_CTL_SRC_SIG_SEL1 | PAD_CTL_OBE | \
++				 PAD_CTL_IBE | PAD_CTL_ODE)
++#define PAD_CTL_I2C2_IMCR_SDA   (PAD_CTL_SRC_SIG_SEL2)
++
++/* I2C2 - Serial Clock Input */
++#define  PAD_CTL_I2C2_MSCR_SCLK (PAD_CTL_SRC_SIG_SEL1 | PAD_CTL_OBE | \
++				 PAD_CTL_IBE | PAD_CTL_ODE)
++#define PAD_CTL_I2C2_IMCR_SCLK  (PAD_CTL_SRC_SIG_SEL2)
++
++/* I2C3 - Serial Data Input */
++#define PAD_CTL_I2C3_MSCR_SDA   (PAD_CTL_SRC_SIG_SEL2 | PAD_CTL_OBE | \
++				 PAD_CTL_IBE | PAD_CTL_ODE)
++#define PAD_CTL_I2C3_IMCR_SDA   (PAD_CTL_SRC_SIG_SEL4)
++
++/* I2C3 - Serial Clock Input */
++#define  PAD_CTL_I2C3_MSCR_SCLK (PAD_CTL_SRC_SIG_SEL4 | PAD_CTL_OBE | \
++				 PAD_CTL_IBE | PAD_CTL_ODE)
++#define PAD_CTL_I2C3_IMCR_SCLK  (PAD_CTL_SRC_SIG_SEL3)
++
++/* I2C4 - Serial Data Input */
++#define PAD_CTL_I2C4_MSCR_SDA   (PAD_CTL_SRC_SIG_SEL1 | PAD_CTL_OBE | \
++				 PAD_CTL_IBE | PAD_CTL_ODE)
++#define PAD_CTL_I2C4_IMCR_SDA   (PAD_CTL_SRC_SIG_SEL3)
++
++/* I2C4 - Serial Clock Input */
++#define  PAD_CTL_I2C4_MSCR_SCLK (PAD_CTL_SRC_SIG_SEL2 | PAD_CTL_OBE | \
++				 PAD_CTL_IBE | PAD_CTL_ODE)
++#define PAD_CTL_I2C4_IMCR_SCLK  (PAD_CTL_SRC_SIG_SEL3)
++
++/* ENET CFG1 */
++#define PAD_CTL_ENET_CFG1	(PAD_CTL_PUE | PAD_CTL_PUS | \
++				 PAD_CTL_OBE | PAD_CTL_SRC_SIG_SEL1)
++
++/* ENET CFG2 */
++#define PAD_CTL_ENET_CFG2	(PAD_CTL_SRE_208MHZ | \
++				 PAD_CTL_OBE | PAD_CTL_SRC_SIG_SEL1)
++
++/* ENET CFG3 */
++#define PAD_CTL_ENET_CFG3	(PAD_CTL_SRE_208MHZ | \
++				 PAD_CTL_OBE | PAD_CTL_IBE | \
++				PAD_CTL_SRC_SIG_SEL1)
++
++/* ENET CFG4 */
++#define PAD_CTL_ENET_CFG4	(PAD_CTL_SRE_208MHZ | PAD_CTL_IBE)
++
++/* SPI 0 */
++#define PAD_CTL_SPI_MSCR_CSx	(PAD_CTL_OBE | PAD_CTL_PUE | \
++				 PAD_CTL_PUS)
++
++#define PAD_CTL_SPI0_MSCR_SCK   (PAD_CTL_OBE | \
++				PAD_CTL_SRC_SIG_SEL1)
++
++#define PAD_CTL_SPI0_MSCR_SOUT	(PAD_CTL_OBE | \
++				 PAD_CTL_SRC_SIG_SEL1)
++
++#define PAD_CTL_SPI0_MSCR_SIN	(PAD_CTL_PUE | PAD_CTL_IBE | \
++				 PAD_CTL_PUS)
++
++#define PAD_CTL_SPI0_IMCR_SIN	(PAD_CTL_SRC_SIG_SEL2)
++
++/* SPI 1 */
++#define PAD_CTL_SPI1_MSCR_SCK   (PAD_CTL_OBE | \
++				PAD_CTL_SRC_SIG_SEL3)
++
++#define PAD_CTL_SPI1_MSCR_SOUT	(PAD_CTL_OBE | \
++				 PAD_CTL_SRC_SIG_SEL2)
++
++#define PAD_CTL_SPI1_MSCR_SIN	(PAD_CTL_PUE | PAD_CTL_IBE | \
++				 PAD_CTL_PUS)
++
++#define PAD_CTL_SPI1_IMCR_SIN	(PAD_CTL_SRC_SIG_SEL2)
++
++/* SPI 4 */
++#define PAD_CTL_SPI4_MSCR_SCK   (PAD_CTL_OBE | \
++				PAD_CTL_SRC_SIG_SEL4)
++
++#define PAD_CTL_SPI4_MSCR_SOUT	(PAD_CTL_OBE | \
++				 PAD_CTL_SRC_SIG_SEL4)
++
++#define PAD_CTL_SPI4_MSCR_SIN	(PAD_CTL_PUE | PAD_CTL_IBE | \
++				 PAD_CTL_PUS)
++
++#define PAD_CTL_SPI4_IMCR_SIN	(PAD_CTL_SRC_SIG_SEL2)
++
++/* SPI 5 */
++#define PAD_CTL_SPI5_MSCR_SCK   (PAD_CTL_OBE | \
++				PAD_CTL_SRC_SIG_SEL3)
++
++#define PAD_CTL_SPI5_MSCR_SOUT	(PAD_CTL_OBE | \
++				 PAD_CTL_SRC_SIG_SEL3)
++
++#define PAD_CTL_SPI5_MSCR_SIN	(PAD_CTL_PUE | PAD_CTL_IBE | \
++				 PAD_CTL_PUS)
++
++#define PAD_CTL_SPI5_IMCR_SIN	(PAD_CTL_SRC_SIG_SEL2)
++
++/* USB Configurations */
++#define PAD_CTL_USB_DATA_MSCR	(PAD_CTL_OBE | \
++				 PAD_CTL_IBE | \
++				 PAD_CTL_SRC_SIG_SEL1)
++#define PAD_CTL_USB_IN_MSCR	(PAD_CTL_IBE)
++
++/* UART configuration */
++#define S32_GEN1_PAD_PK15__UART0_TXD_OUT     175  PAD_CTL_UART_TX
++#define S32_GEN1_PAD_PL00__UART0_RXD_OUT     176  PAD_CTL_UART_RX_MSCR
++#define S32_GEN1_PAD_PL00__UART0_RXD_IN      512  PAD_CTL_UART_RX_IMCR
++
++#define S32_GEN1_PAD_PB9__UART1_TXD          25  (PAD_CTL_SRE_150MHZ | \
++		                                  PAD_CTL_OBE | \
++                                                  PAD_CTL_SRC_SIG_SEL1)
++#define S32_GEN1_PAD_PB10__UART1_RXD_IN     736  PAD_CTL_SRC_SIG_SEL3
++#define S32_GEN1_PAD_PB10__UART1_RXD_OUT     26  PAD_CTL_IBE
++
++/* CAN configuration */
++/* Note for S32G CAN1-CAN15 LLCE CAN SSS=1
++ * For CAN0 LLCE CAN SSS=2
++ */
++/* CAN0 configuration */
++/* EVB Board, Output on PROC Board, J79 */
++#define S32_GEN1_PAD_PC12__CAN0_TXD        44   (PAD_CTL_CAN_TX_MSCRx | \
++						 PAD_CTL_SRC_SIG_SEL1)
++#define S32_GEN1_PAD_PC11__CAN0_RXD_OUT    43   PAD_CTL_CAN_RX_MSCR
++#define S32_GEN1_PAD_PC11__CAN0_RXD_IN     513  PAD_CTL_CAN_RX_IMCR
++
++/* CAN2 configuration */
++/* EVB Board, Output on Platform Board, J19 */
++#define S32_GEN1_PAD_PB11__CAN2_TXD         27  (PAD_CTL_CAN_TX_MSCRx | \
++						 PAD_CTL_SRC_SIG_SEL2)
++#define S32_GEN1_PAD_PB12__CAN2_RXD_OUT     28  PAD_CTL_CAN_RX_MSCR
++#define S32_GEN1_PAD_PB12__CAN2_RXD_IN     632  PAD_CTL_CAN_RX_IMCR
++
++/* CAN3 configuration */
++/* EVB Board, Output on Platform Board, J20 */
++#define S32_GEN1_PAD_PB9__CAN3_TXD          25  (PAD_CTL_CAN_TX_MSCRx | \
++						PAD_CTL_SRC_SIG_SEL2)
++#define S32_GEN1_PAD_PB10__CAN3_RXD_OUT     26  PAD_CTL_CAN_RX_MSCR
++#define S32_GEN1_PAD_PB10__CAN3_RXD_IN     633  PAD_CTL_CAN_RX_IMCR
++
++/* uSDHC configuration */
++#define S32_GEN1_PAD_PC14__USDHC_CLK_OUT     46  PAD_CTL_USDHC
++
++#define S32_GEN1_PAD_PC15__USDHC_CMD_OUT     47  PAD_CTL_USDHC
++#define S32_GEN1_PAD_PC15__USDHC_CMD_IN      515 PAD_CTL_SRC_SIG_SEL2
++
++#define S32_GEN1_PAD_PD0__USDHC_DAT0_OUT     48  PAD_CTL_USDHC
++#define S32_GEN1_PAD_PD0__USDHC_DAT0_IN      516 PAD_CTL_SRC_SIG_SEL2
++
++#define S32_GEN1_PAD_PD1__USDHC_DAT1_OUT     49  PAD_CTL_USDHC
++#define S32_GEN1_PAD_PD1__USDHC_DAT1_IN      517 PAD_CTL_SRC_SIG_SEL2
++
++#define S32_GEN1_PAD_PD2__USDHC_DAT2_OUT     50  PAD_CTL_USDHC
++#define S32_GEN1_PAD_PD2__USDHC_DAT2_IN      520 PAD_CTL_SRC_SIG_SEL2
++
++#define S32_GEN1_PAD_PD3__USDHC_DAT3_OUT     51  PAD_CTL_USDHC
++#define S32_GEN1_PAD_PD3__USDHC_DAT3_IN      521 PAD_CTL_SRC_SIG_SEL2
++
++#define S32_GEN1_PAD_PD4__USDHC_DAT4_OUT     52  PAD_CTL_USDHC
++#define S32_GEN1_PAD_PD4__USDHC_DAT4_IN      522 PAD_CTL_SRC_SIG_SEL2
++
++#define S32_GEN1_PAD_PD5__USDHC_DAT5_OUT     53  PAD_CTL_USDHC
++#define S32_GEN1_PAD_PD5__USDHC_DAT5_IN      523 PAD_CTL_SRC_SIG_SEL2
++
++#define S32_GEN1_PAD_PD6__USDHC_DAT6_OUT     54  PAD_CTL_USDHC
++#define S32_GEN1_PAD_PD6__USDHC_DAT6_IN      519 PAD_CTL_SRC_SIG_SEL2
++
++#define S32_GEN1_PAD_PD7__USDHC_DAT7_OUT     55  PAD_CTL_USDHC
++#define S32_GEN1_PAD_PD7__USDHC_DAT7_IN      518 PAD_CTL_SRC_SIG_SEL2
++
++/* QSPI configuration */
++/* Note as-is DQS not enabled OR PAD_CTL_QSPI_A_DQS to enable */
++#define S32_GEN1_PAD_PF13__QSPI_A_DQS        548 PAD_CTL_SRC_SIG_SEL2
++#define S32_GEN1_PAD_PD4__QSPI_B_DQS         558 PAD_CTL_SRC_SIG_SEL2
++
++#define S32_GEN1_PAD_PF5__QSPI_A_DATA0_IN    540 PAD_CTL_SRC_SIG_SEL2
++#define S32_GEN1_PAD_PF5__QSPI_A_DATA0_OUT   85  PAD_CTL_QSPI_A_DATA0_7
++
++#define S32_GEN1_PAD_PF6__QSPI_A_DATA1_IN    541 PAD_CTL_SRC_SIG_SEL2
++#define S32_GEN1_PAD_PF6__QSPI_A_DATA1_OUT   86  PAD_CTL_QSPI_A_DATA0_7
++
++#define S32_GEN1_PAD_PF7__QSPI_A_DATA2_IN    542 PAD_CTL_SRC_SIG_SEL2
++#define S32_GEN1_PAD_PF7__QSPI_A_DATA2_OUT   87 PAD_CTL_QSPI_A_DATA0_7
++
++#define S32_GEN1_PAD_PF8__QSPI_A_DATA3_IN    543 PAD_CTL_SRC_SIG_SEL2
++#define S32_GEN1_PAD_PF8__QSPI_A_DATA3_OUT   88  PAD_CTL_QSPI_A_DATA0_7
++
++#define S32_GEN1_PAD_PF9__QSPI_A_DATA4_IN    544 PAD_CTL_SRC_SIG_SEL2
++#define S32_GEN1_PAD_PF9__QSPI_A_DATA4_OUT   89 PAD_CTL_QSPI_A_DATA0_7
++
++#define S32_GEN1_PAD_PF10__QSPI_A_DATA5_IN   545 PAD_CTL_SRC_SIG_SEL2
++#define S32_GEN1_PAD_PF10__QSPI_A_DATA5_OUT  90 PAD_CTL_QSPI_A_DATA0_7
++
++#define S32_GEN1_PAD_PF11__QSPI_A_DATA6_IN   546 PAD_CTL_SRC_SIG_SEL2
++#define S32_GEN1_PAD_PF11__QSPI_A_DATA6_OUT  91 PAD_CTL_QSPI_A_DATA0_7
++
++#define S32_GEN1_PAD_PF12__QSPI_A_DATA7_IN   547 PAD_CTL_SRC_SIG_SEL2
++#define S32_GEN1_PAD_PF12__QSPI_A_DATA7_OUT  92 PAD_CTL_QSPI_A_DATA0_7
++
++#define S32_GEN1_PAD_PC14__QSPI_B_DATA0_IN   552 PAD_CTL_SRC_SIG_SEL2
++#define S32_GEN1_PAD_PC14__QSPI_B_DATA0_OUT  46 PAD_CTL_QSPI_B_DATA0_7
++
++#define S32_GEN1_PAD_PD3__QSPI_B_DATA1_IN    554 PAD_CTL_SRC_SIG_SEL2
++#define S32_GEN1_PAD_PD3__QSPI_B_DATA1_OUT   51 PAD_CTL_QSPI_B_DATA0_7
++
++#define S32_GEN1_PAD_PD9__QSPI_B_DATA2_IN    551 PAD_CTL_SRC_SIG_SEL2
++#define S32_GEN1_PAD_PD9__QSPI_B_DATA2_OUT   57 PAD_CTL_QSPI_B_DATA0_7
++
++#define S32_GEN1_PAD_PC15__QSPI_B_DATA3_IN   553 PAD_CTL_SRC_SIG_SEL2
++#define S32_GEN1_PAD_PC15__QSPI_B_DATA3_OUT  47 PAD_CTL_QSPI_B_DATA0_7
++
++#define S32_GEN1_PAD_PD2__QSPI_B_DATA4_IN    557 PAD_CTL_SRC_SIG_SEL2
++#define S32_GEN1_PAD_PD2__QSPI_B_DATA4_OUT   50 PAD_CTL_QSPI_B_DATA0_7
++
++#define S32_GEN1_PAD_PD8__QSPI_B_DATA5_IN    550 PAD_CTL_SRC_SIG_SEL2
++#define S32_GEN1_PAD_PD8__QSPI_B_DATA5_OUT   56 PAD_CTL_QSPI_B_DATA0_7
++
++#define S32_GEN1_PAD_PD10__QSPI_B_DATA6_IN   556 PAD_CTL_SRC_SIG_SEL2
++#define S32_GEN1_PAD_PD10__QSPI_B_DATA6_OUT  58 PAD_CTL_QSPI_B_DATA0_7
++
++#define S32_GEN1_PAD_PD5__QSPI_B_DATA7_IN    555 PAD_CTL_SRC_SIG_SEL2
++#define S32_GEN1_PAD_PD5__QSPI_B_DATA7_OUT   53 PAD_CTL_QSPI_B_DATA0_7
++
++#define S32_GEN1_PAD_PG5__QSPI_A_CS1         92  (PAD_CTL_QSPI_CLK_BASE | \
++						  PAD_CTL_QSPI_A_CS1_MUX)
++#define S32_GEN1_PAD_PD1__QSPI_B_CS1         93  (PAD_CTL_QSPI_CLK_BASE | \
++						  PAD_CTL_QSPI_B_CS1_MUX)
++
++#define S32_GEN1_PAD_PG4__QSPI_A_CS0         100 (PAD_CTL_QSPI_CLK_BASE | \
++						  PAD_CTL_QSPI_A_CS0_MUX)
++#define S32_GEN1_PAD_PG0__QSPI_A_SCK         96  (PAD_CTL_QSPI_CLK_BASE | \
++						  PAD_CTL_QSPI_A_SCK_MUX)
++
++#define S32_GEN1_PAD_PD0__QSPI_B_CS0         48  (PAD_CTL_QSPI_CLK_BASE | \
++						  PAD_CTL_QSPI_B_CS0_MUX)
++#define S32_GEN1_PAD_PD6__QSPI_B_SCK         54  (PAD_CTL_QSPI_CLK_BASE | \
++						  PAD_CTL_QSPI_B_SCK_MUX)
++
++#define S32_GEN1_PAD_PG2__QSPI_CK2           98  (PAD_CTL_QSPI_CLK_BASE | \
++						  PAD_CTL_QSPI_CK2_MUX)
++
++/* I2C configuration */
++#define S32_GEN1_PAD_PB0__I2C0_DATA_OUT      16  PAD_CTL_I2C0_MSCR_SDA
++#define S32_GEN1_PAD_PB0__I2C0_DATA_IN       565 PAD_CTL_I2C0_IMCR_SDA
++
++#define S32_GEN1_PAD_PB1__I2C0_SCLK_OUT      17  PAD_CTL_I2C0_MSCR_SCLK
++#define S32_GEN1_PAD_PB1__I2C0_SCLK_IN       566 PAD_CTL_I2C0_IMCR_SCLK
++
++#define S32_GEN1_PAD_PB4__I2C1_DATA_OUT      20  PAD_CTL_I2C1_MSCR_SDA
++#define S32_GEN1_PAD_PB4__I2C1_DATA_IN       718 PAD_CTL_I2C1_IMCR_SDA
++
++#define S32_GEN1_PAD_PB3__I2C1_SCLK_OUT      19  PAD_CTL_I2C1_MSCR_SCLK
++#define S32_GEN1_PAD_PB3__I2C1_SCLK_IN       717 PAD_CTL_I2C1_IMCR_SCLK
++
++#define S32_GEN1_PAD_PB6__I2C2_DATA_OUT      22  PAD_CTL_I2C2_MSCR_SDA
++#define S32_GEN1_PAD_PB6__I2C2_DATA_IN       720 PAD_CTL_I2C2_IMCR_SDA
++
++#define S32_GEN1_PAD_PB5__I2C2_SCLK_OUT      21  PAD_CTL_I2C2_MSCR_SCLK
++#define S32_GEN1_PAD_PB5__I2C2_SCLK_IN       719 PAD_CTL_I2C2_IMCR_SCLK
++
++#define S32_GEN1_PAD_PB13__I2C3_DATA_OUT     29  PAD_CTL_I2C3_MSCR_SDA
++#define S32_GEN1_PAD_PB13__I2C3_DATA_IN      722 PAD_CTL_I2C3_IMCR_SDA
++#define S32_GEN1_PAD_PF2__I2C3_DATA_OUT      82  (PAD_CTL_SRC_SIG_SEL3 | PAD_CTL_OBE | PAD_CTL_IBE | PAD_CTL_ODE)
++#define S32_GEN1_PAD_PF2__I2C3_DATA_IN       722 (PAD_CTL_SRC_SIG_SEL3)
++
++#define S32_GEN1_PAD_PB14__I2C3_SCLK_OUT     30  PAD_CTL_I2C3_MSCR_SCLK
++#define S32_GEN1_PAD_PB14__I2C3_SCLK_IN      721 PAD_CTL_I2C3_IMCR_SCLK
++#define S32_GEN1_PAD_PE15__I2C3_SCLK_OUT     79  (PAD_CTL_SRC_SIG_SEL3 | PAD_CTL_OBE | PAD_CTL_IBE | PAD_CTL_ODE)
++#define S32_GEN1_PAD_PE15__I2C3_SCLK_IN      721 (PAD_CTL_SRC_SIG_SEL5)
++
++#define S32_GEN1_PAD_PC1__I2C4_DATA_OUT      33  PAD_CTL_I2C4_MSCR_SDA
++#define S32_GEN1_PAD_PC1__I2C4_DATA_IN       724 PAD_CTL_I2C4_IMCR_SDA
++
++#define S32_GEN1_PAD_PC2__I2C4_SCLK_OUT      34  PAD_CTL_I2C4_MSCR_SCLK
++#define S32_GEN1_PAD_PC2__I2C4_SCLK_IN       723 PAD_CTL_I2C4_IMCR_SCLK
++
++/* ENET configuration */
++#define S32_GEN1_PAD_PD12__MDC              60  PAD_CTL_ENET_CFG2
++
++#define S32_GEN1_PAD_PD13__MDIO_OUT         61  PAD_CTL_ENET_CFG3
++#define S32_GEN1_PAD_PD13__MDIO_IN          527 PAD_CTL_SRC_SIG_SEL2
++
++#define S32_GEN1_PAD_PE2__TXCLK_OUT         66  PAD_CTL_ENET_CFG1
++#define S32_GEN1_PAD_PE2__TXCLK_IN          538 PAD_CTL_SRC_SIG_SEL2
++
++#define S32_GEN1_PAD_PE8__RXCLK_OUT         72  PAD_CTL_ENET_CFG4
++#define S32_GEN1_PAD_PE8__RXCLK_IN          529 PAD_CTL_SRC_SIG_SEL2
++
++#define S32_GEN1_PAD_PE10__RX_D0_OUT        74  PAD_CTL_ENET_CFG4
++#define S32_GEN1_PAD_PE10__RX_D0_IN         531 PAD_CTL_SRC_SIG_SEL2
++
++#define S32_GEN1_PAD_PE11__RX_D1_OUT        75  PAD_CTL_ENET_CFG4
++#define S32_GEN1_PAD_PE11__RX_D1_IN         532 PAD_CTL_SRC_SIG_SEL2
++
++#define S32_GEN1_PAD_PE12__RX_D2_OUT        76  PAD_CTL_ENET_CFG4
++#define S32_GEN1_PAD_PE12__RX_D2_IN         533 PAD_CTL_SRC_SIG_SEL2
++
++#define S32_GEN1_PAD_PE13__RX_D3_OUT        77  PAD_CTL_ENET_CFG4
++#define S32_GEN1_PAD_PE13__RX_D3_IN         534 PAD_CTL_SRC_SIG_SEL2
++
++#define S32_GEN1_PAD_PE9__RX_DV_OUT          73  PAD_CTL_ENET_CFG4
++#define S32_GEN1_PAD_PE9__RX_DV_IN           530 PAD_CTL_SRC_SIG_SEL2
++
++#define S32_GEN1_PAD_PE4__TX_D0_OUT	    68	PAD_CTL_ENET_CFG2
++#define S32_GEN1_PAD_PE5__TX_D1_OUT	    69	PAD_CTL_ENET_CFG2
++#define S32_GEN1_PAD_PE6__TX_D2_OUT	    70	PAD_CTL_ENET_CFG2
++#define S32_GEN1_PAD_PE7__TX_D3_OUT	    71	PAD_CTL_ENET_CFG2
++#define S32_GEN1_PAD_PE3__TX_EN_OUT	    67	PAD_CTL_ENET_CFG2
++
++/* SPI 0 */
++#define S32_GEN1_PAD_PA15__SPI0_SOUT_OUT	15	PAD_CTL_SPI0_MSCR_SOUT
++#define S32_GEN1_PAD_PA14__SPI0_SIN_OUT		14	PAD_CTL_SPI0_MSCR_SIN
++#define S32_GEN1_PAD_PA14__SPI0_SIN_IN		982	PAD_CTL_SPI0_IMCR_SIN
++#define S32_GEN1_PAD_PA13__SPI0_SCK_OUT		13	PAD_CTL_SPI0_MSCR_SCK
++#define S32_GEN1_PAD_PB0__SPI0_CS0_OUT		16	(PAD_CTL_SPI_MSCR_CSx | \
++							 PAD_CTL_SRC_SIG_SEL2)
++#define S32_GEN1_PAD_PB9__SPI0_CS1_OUT		25	(PAD_CTL_SPI_MSCR_CSx | \
++							 PAD_CTL_SRC_SIG_SEL3)
++
++/* SPI 1 */
++#define S32_GEN1_PAD_PA6__SPI1_SOUT_OUT		6	PAD_CTL_SPI1_MSCR_SOUT
++#define S32_GEN1_PAD_PF15__SPI1_SIN_OUT		95	PAD_CTL_SPI1_MSCR_SIN
++#define S32_GEN1_PAD_PF15__SPI1_SIN_IN		987	PAD_CTL_SPI1_IMCR_SIN
++#define S32_GEN1_PAD_PA8__SPI1_SCK_OUT		8	PAD_CTL_SPI1_MSCR_SCK
++#define S32_GEN1_PAD_PA7__SPI1_CS0_OUT		7	(PAD_CTL_SPI_MSCR_CSx | \
++							 PAD_CTL_SRC_SIG_SEL2)
++
++/* SPI 4 */
++#define S32_GEN1_PAD_PB9__SPI4_SOUT_OUT		25	PAD_CTL_SPI4_MSCR_SOUT
++#define S32_GEN1_PAD_PC10__SPI4_SIN_OUT		42	PAD_CTL_SPI4_MSCR_SIN
++#define S32_GEN1_PAD_PC10__SPI4_SIN_IN		1002	PAD_CTL_SPI4_IMCR_SIN
++#define S32_GEN1_PAD_PC9__SPI4_SCK_OUT		41	PAD_CTL_SPI4_MSCR_SCK
++#define S32_GEN1_PAD_PB10__SPI4_CS0_OUT		26	(PAD_CTL_SPI_MSCR_CSx | \
++							 PAD_CTL_SRC_SIG_SEL2)
++
++/* SPI 5 */
++#define S32_GEN1_PAD_PA11__SPI5_SOUT_OUT	11	PAD_CTL_SPI5_MSCR_SOUT
++#define S32_GEN1_PAD_PA10__SPI5_SIN_OUT		10	PAD_CTL_SPI5_MSCR_SIN
++#define S32_GEN1_PAD_PA10__SPI5_SIN_IN		1007	PAD_CTL_SPI5_IMCR_SIN
++#define S32_GEN1_PAD_PA9__SPI5_SCK_OUT		9	PAD_CTL_SPI5_MSCR_SCK
++#define S32_GEN1_PAD_PA12__SPI5_CS0_OUT		12	(PAD_CTL_SPI_MSCR_CSx | \
++							 PAD_CTL_SRC_SIG_SEL3)
++/* USB */
++#define S32_GEN1_PAD_PD14__USB_ULPI_DATA_O0	62	PAD_CTL_USB_DATA_MSCR
++#define S32_GEN1_PAD_PD14__USB_ULPI_DATA_I0_IN	896	(PAD_CTL_SRC_SIG_SEL2)
++
++#define S32_GEN1_PAD_PD15__USB_ULPI_DATA_O1	63	PAD_CTL_USB_DATA_MSCR
++#define S32_GEN1_PAD_PD15__USB_ULPI_DATA_I1_IN	897	(PAD_CTL_SRC_SIG_SEL2)
++
++#define S32_GEN1_PAD_PE0__USB_ULPI_DATA_O2	64	PAD_CTL_USB_DATA_MSCR
++#define S32_GEN1_PAD_PE0__USB_ULPI_DATA_I2_IN	898	(PAD_CTL_SRC_SIG_SEL2)
++
++#define S32_GEN1_PAD_PE1__USB_ULPI_DATA_O3	65	PAD_CTL_USB_DATA_MSCR
++#define S32_GEN1_PAD_PE1__USB_ULPI_DATA_I3_IN	899	(PAD_CTL_SRC_SIG_SEL2)
++
++#define S32_GEN1_PAD_PL12__USB_ULPI_DATA_O4	188	PAD_CTL_USB_DATA_MSCR
++#define S32_GEN1_PAD_PL12__USB_ULPI_DATA_I4_IN	900	(PAD_CTL_SRC_SIG_SEL2)
++
++#define S32_GEN1_PAD_PL13__USB_ULPI_DATA_O5	189	PAD_CTL_USB_DATA_MSCR
++#define S32_GEN1_PAD_PL13__USB_ULPI_DATA_I5_IN	901	(PAD_CTL_SRC_SIG_SEL2)
++
++#define S32_GEN1_PAD_PL14__USB_ULPI_DATA_O6	190	PAD_CTL_USB_DATA_MSCR
++#define S32_GEN1_PAD_PL14__USB_ULPI_DATA_I6_IN	902	(PAD_CTL_SRC_SIG_SEL2)
++
++#define S32_GEN1_PAD_PH0__USB_ULPI_DATA_O7	112	PAD_CTL_USB_DATA_MSCR
++#define S32_GEN1_PAD_PH0__USB_ULPI_DATA_I7_IN	903	(PAD_CTL_SRC_SIG_SEL2)
++
++#define S32_GEN1_PAD_PL8__USB_ULPI_CLK_OUT	184	PAD_CTL_USB_IN_MSCR
++#define S32_GEN1_PAD_PL8__USB_ULPI_CLK_IN	895	(PAD_CTL_SRC_SIG_SEL2)
++
++#define S32_GEN1_PAD_PL9__USB_ULPI_DIR_OUT	185	PAD_CTL_USB_IN_MSCR
++#define S32_GEN1_PAD_PL9__USB_ULPI_DIR_IN	904	(PAD_CTL_SRC_SIG_SEL2)
++
++#define S32_GEN1_PAD_PL10__USB_ULPI_STP		186	(PAD_CTL_OBE | \
++							 PAD_CTL_SRC_SIG_SEL1)
++
++#define S32_GEN1_PAD_PL11__USB_ULPI_NXT_OUT	187	PAD_CTL_USB_IN_MSCR
++#define S32_GEN1_PAD_PL11__USB_ULPI_NXT_IN	905	(PAD_CTL_SRC_SIG_SEL2)
++
++/* PWM */
++#define S32_GEN1_PAD_PL5__SIUL_FTM_CH4  181 (PAD_CTL_OBE | PAD_CTL_SRE_150MHZ | PAD_CTL_SRC_SIG_SEL3)
++
++/* SIUL2 GPIOs */
++/* Note some GPIO pads are input only and their name reflects this limitation */
++#define S32_GEN1_PAD_PA0__SIUL_GPIO0	 0	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PA1__SIUL_GPIO1	 1	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PA2__SIUL_GPIO2	 2	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PA3__SIUL_GPIO3	 3	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PA4__SIUL_GPIO4	 4	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PA5__SIUL_GPIO5	 5	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PA6__SIUL_GPIO6	 6	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PA7__SIUL_GPIO7	 7	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PA8__SIUL_GPIO8	 8	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PA9__SIUL_GPIO9	 9	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PA10__SIUL_GPI10	 10	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PA11__SIUL_GPIO11	 11	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PA12__SIUL_GPIO12	 12	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PA13__SIUL_GPIO13	 13	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PA14__SIUL_GPIO14	 14	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PA15__SIUL_GPIO15	 15	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PB0__SIUL_GPIO16	 16	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PB1__SIUL_GPIO17	 17	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PB2__SIUL_GPIO18	 18	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PB3__SIUL_GPIO19	 19	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PB4__SIUL_GPIO20	 20	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PB5__SIUL_GPIO21	 21	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PB6__SIUL_GPIO22	 22	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PB7__SIUL_GPIO23	 23	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PB8__SIUL_GPIO24	 24	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PB9__SIUL_GPIO25	 25	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PB10__SIUL_GPIO26	 26	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PB11__SIUL_GPIO27	 27	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PB12__SIUL_GPIO28	 28	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PB13__SIUL_GPIO29	 29	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PB14__SIUL_GPIO30	 30	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PB15__SIUL_GPIO31	 31	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PC0__SIUL_GPIO32	 32	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PC1__SIUL_GPIO33	 33	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PC2__SIUL_GPIO34	 34	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PC3__SIUL_GPIO35	 35	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PC4__SIUL_GPI36	 36	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PC5__SIUL_GPIO37	 37	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PC6__SIUL_GPIO38	 38	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PC7__SIUL_GPIO39	 39	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PC8__SIUL_GPIO40	 40	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PC9__SIUL_GPIO41	 41	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PC10__SIUL_GPIO42	 42	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PC11__SIUL_GPI43	 43	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PC12__SIUL_GPIO44	 44	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PC13__SIUL_GPIO45	 45	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PC14__SIUL_GPIO46	 46	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PC15__SIUL_GPIO47	 47	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PD0__SIUL_GPIO48	 48	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PD1__SIUL_GPIO49	 49	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PD2__SIUL_GPIO50	 50	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PD3__SIUL_GPIO51	 51	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PD4__SIUL_GPIO52	 52	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PD5__SIUL_GPIO53	 53	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PD6__SIUL_GPIO54	 54	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PD7__SIUL_GPIO55	 55	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PD8__SIUL_GPIO56	 56	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PD9__SIUL_GPIO57	 57	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PD10__SIUL_GPIO58	 58	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PD11__SIUL_GPIO59	 59	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PD12__SIUL_GPIO60	 60	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PD13__SIUL_GPIO61	 61	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PD14__SIUL_GPIO62	 62	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PD15__SIUL_GPIO63	 63	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PE0__SIUL_GPIO64	 64	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PE1__SIUL_GPIO65	 65	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PE2__SIUL_GPIO66	 66	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PE3__SIUL_GPIO67	 67	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PE4__SIUL_GPIO68	 68	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PE5__SIUL_GPIO69	 69	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PE6__SIUL_GPIO70	 70	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PE7__SIUL_GPIO71	 71	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PE8__SIUL_GPIO72	 72	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PE9__SIUL_GPIO73	 73	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PE10__SIUL_GPIO74	 74	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PE11__SIUL_GPIO75	 75	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PE12__SIUL_GPIO76	 76	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PE13__SIUL_GPIO77	 77	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PE14__SIUL_GPIO78	 78	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PE15__SIUL_GPIO79	 79	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PF0__SIUL_GPIO80	 80	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PF1__SIUL_GPIO81	 81	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PF2__SIUL_GPIO82	 82	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PF3__SIUL_GPIO83	 83	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PF4__SIUL_GPIO84	 84	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PF5__SIUL_GPIO85	 85	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PF6__SIUL_GPIO86	 86	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PF7__SIUL_GPIO87	 87	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PF8__SIUL_GPIO88	 88	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PF9__SIUL_GPIO89	 89	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PF10__SIUL_GPIO90	 90	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PF11__SIUL_GPIO91	 91	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PF12__SIUL_GPIO92	 92	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PF13__SIUL_GPIO93	 93	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PF14__SIUL_GPIO94	 94	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PF15__SIUL_GPIO95	 95	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PG0__SIUL_GPIO96	 96	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PG1__SIUL_GPIO97	 97	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PG2__SIUL_GPIO98	 98	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PG3__SIUL_GPIO99	 99	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PG4__SIUL_GPIO100	 100	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PG5__SIUL_GPIO101	 101	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PH0__SIUL_GPIO112	 112	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PH1__SIUL_GPIO113	 113	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PH2__SIUL_GPIO114	 114	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PH3__SIUL_GPIO115	 115	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PH4__SIUL_GPIO116	 116	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PH5__SIUL_GPIO117	 117	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PH6__SIUL_GPIO118	 118	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PH7__SIUL_GPIO119	 119	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PH8__SIUL_GPIO120	 120	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PH9__SIUL_GPIO121	 121	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PH10__SIUL_GPIO122	 122	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PJ0__SIUL_GPIO144	 144	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PJ1__SIUL_GPIO144	 145	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PJ2__SIUL_GPI146	 146	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PJ3__SIUL_GPIO147	 147	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PJ4__SIUL_GPI148	 148	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PJ5__SIUL_GPIO149	 149	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PJ6__SIUL_GPI150	 150	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PJ7__SIUL_GPIO151	 151	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PJ8__SIUL_GPI152	 152	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PJ9__SIUL_GPIO153	 153	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PJ10__SIUL_GPI154	 154	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PJ11__SIUL_GPIO155	 155	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PJ12__SIUL_GPI156	 156	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PJ13__SIUL_GPIO157	 157	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PJ14__SIUL_GPI158	 158	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PJ15__SIUL_GPIO159	 159	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PK00__SIUL_GPI160	 160	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PK01__SIUL_GPIO161	 161	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PK02__SIUL_GPI162	 162	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PK03__SIUL_GPIO163	 163	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PK04__SIUL_GPI164	 164	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PK05__SIUL_GPIO165	 165	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PK06__SIUL_GPI166	 166	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PK07__SIUL_GPIO167	 167	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PK08__SIUL_GPI168	 168	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PK09__SIUL_GPIO169	 169	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PK10__SIUL_GPI170	 170	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PK11__SIUL_GPIO171	 171	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PK12__SIUL_GPI172	 172	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PK13__SIUL_GPIO173	 173	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PK14__SIUL_GPI174	 174	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PK15__SIUL_GPIO175	 175	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PL0__SIUL_GPIO176	 176	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PL1__SIUL_GPI177	 177	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PL2__SIUL_GPIO178	 178	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PL3__SIUL_GPI179	 179	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PL4__SIUL_GPIO180	 180	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PL5__SIUL_GPIO181	 181	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PL6__SIUL_GPI182	 182	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PL7__SIUL_GPI183	 183	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PL8__SIUL_GPIO184	 184	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PL9__SIUL_GPIO185	 185	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PL10__SIUL_GPIO186	 186	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PL11__SIUL_GPIO187	 187	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PL12__SIUL_GPIO188	 188	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PL13__SIUL_GPIO189	 189	 PAD_CTL_SRC_SIG_SEL0
++#define S32_GEN1_PAD_PL14__SIUL_GPIO190	 190	 PAD_CTL_SRC_SIG_SEL0
++
++/* SIUL2 EIRQ pins */
++#define S32_GEN1_PAD_PB3__SIUL_EIRQ0		910	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PJ7__SIUL_EIRQ0		910	PAD_CTL_EIRQ_3
++#define S32_GEN1_PAD_PB4__SIUL_EIRQ1		911	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PJ8__SIUL_EIRQ1		911	PAD_CTL_EIRQ_3
++#define S32_GEN1_PAD_PB5__SIUL_EIRQ2		912	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PL1__SIUL_EIRQ2		912	PAD_CTL_EIRQ_3
++#define S32_GEN1_PAD_PB6__SIUL_EIRQ3		913	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PL2__SIUL_EIRQ3		913	PAD_CTL_EIRQ_3
++#define S32_GEN1_PAD_PB7__SIUL_EIRQ4		914	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PL3__SIUL_EIRQ4		914	PAD_CTL_EIRQ_3
++#define S32_GEN1_PAD_PB8__SIUL_EIRQ5		915	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PL4__SIUL_EIRQ5		915	PAD_CTL_EIRQ_3
++#define S32_GEN1_PAD_PB9__SIUL_EIRQ6		916	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PL5__SIUL_EIRQ6		916	PAD_CTL_EIRQ_3
++#define S32_GEN1_PAD_PB10__SIUL_EIRQ7		917	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PL6__SIUL_EIRQ7		917	PAD_CTL_EIRQ_3
++#define S32_GEN1_PAD_PB11__SIUL_EIRQ8		918	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PJ10__SIUL_EIRQ8		918	PAD_CTL_EIRQ_3
++#define S32_GEN1_PAD_PB12__SIUL_EIRQ9		919	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PK0__SIUL_EIRQ9		919	PAD_CTL_EIRQ_3
++#define S32_GEN1_PAD_PB13__SIUL_EIRQ10		920	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PK5__SIUL_EIRQ10		920	PAD_CTL_EIRQ_3
++#define S32_GEN1_PAD_PK8__SIUL_EIRQ11		921	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PB15__SIUL_EIRQ12		922	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PC1__SIUL_EIRQ13		923	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PC2__SIUL_EIRQ14		924	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PC3__SIUL_EIRQ15		925	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PL8__SIUL_EIRQ16		926	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PL9__SIUL_EIRQ17		927	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PL10__SIUL_EIRQ18		928	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PL11__SIUL_EIRQ19		929	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PL12__SIUL_EIRQ20		930	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PL13__SIUL_EIRQ21		931	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PL14__SIUL_EIRQ22		932	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PH1__SIUL_EIRQ23		933	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PH2__SIUL_EIRQ24		934	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PH3__SIUL_EIRQ25		935	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PH5__SIUL_EIRQ26		936	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PC4__SIUL_EIRQ27		937	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PC5__SIUL_EIRQ28		938	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PC6__SIUL_EIRQ29		939	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PC7__SIUL_EIRQ30		940	PAD_CTL_EIRQ_2
++#define S32_GEN1_PAD_PC8__SIUL_EIRQ31		941	PAD_CTL_EIRQ_2
++
++#endif /* __DT_BINDINGS_HPE_PINCTRL_H__ */
+diff --git a/include/linux/SRAM_address.h b/include/linux/SRAM_address.h
+new file mode 100644
+index 000000000..44facc9e5
+--- /dev/null
++++ b/include/linux/SRAM_address.h
+@@ -0,0 +1,230 @@
++/**
++ * \file SRAM_address.h
++ *
++ * \brief SRAM layout addresses definition
++ *
++ * This file contains the implementation of the SRAM addresses 
++ * 
++ * \author Continental Automotive , Toulouse 
++ * 
++ * Copyright 2022 - 2022 Continental 
++ * All rights exclusively reserved for Continental, 
++ * unless expressly agreed to otherwise. 
++ */ 
++
++
++// Attention!
++// This file is generated!
++// For changes, do not modify this file but the layout associated
++// Layout version 2.03
++
++
++#ifndef SRAM_LAYOUT_ADDRESS_H
++#define SRAM_LAYOUT_ADDRESS_H
++
++/*****   BL2_MMU   ****/
++#define HPCGEN2_SRAM_BL2_MMU_START_ADDRESS   0x34000000u
++#define HPCGEN2_SRAM_BL2_MMU_ENTRYPOINT_ADDRESS 0x34000000u
++#define HPCGEN2_SRAM_BL2_MMU_END_ADDRESS     0x3401FFFFu
++#define HPCGEN2_SRAM_BL2_MMU_SIZE            131072u
++
++/*****   METHAIMAGE   ****/
++#define HPCGEN2_SRAM_METHAIMAGE_START_ADDRESS   0x34020000u
++#define HPCGEN2_SRAM_METHAIMAGE_ENTRYPOINT_ADDRESS 0x34020000u
++#define HPCGEN2_SRAM_METHAIMAGE_END_ADDRESS     0x341FFFFFu
++#define HPCGEN2_SRAM_METHAIMAGE_SIZE            1966080u
++
++/*****   METHA_CODE   ****/
++#define HPCGEN2_SRAM_METHA_CODE_START_ADDRESS   0x34020000u
++#define HPCGEN2_SRAM_METHA_CODE_ENTRYPOINT_ADDRESS 0x34020000u
++#define HPCGEN2_SRAM_METHA_CODE_END_ADDRESS     0x340FFFFFu
++#define HPCGEN2_SRAM_METHA_CODE_SIZE            917504u
++
++/*****   METHA_CONST   ****/
++#define HPCGEN2_SRAM_METHA_CONST_START_ADDRESS   0x34100000u
++#define HPCGEN2_SRAM_METHA_CONST_ENTRYPOINT_ADDRESS 0x34100000u
++#define HPCGEN2_SRAM_METHA_CONST_END_ADDRESS     0x3417FFFFu
++#define HPCGEN2_SRAM_METHA_CONST_SIZE            524288u
++
++/*****   METHA_RAM_INIT   ****/
++#define HPCGEN2_SRAM_METHA_RAM_INIT_START_ADDRESS   0x34180000u
++#define HPCGEN2_SRAM_METHA_RAM_INIT_ENTRYPOINT_ADDRESS 0x34180000u
++#define HPCGEN2_SRAM_METHA_RAM_INIT_END_ADDRESS     0x341FFFFFu
++#define HPCGEN2_SRAM_METHA_RAM_INIT_SIZE            524288u
++
++/*****   METHA_RAM_ZERO   ****/
++#define HPCGEN2_SRAM_METHA_RAM_ZERO_START_ADDRESS   0x34200000u
++#define HPCGEN2_SRAM_METHA_RAM_ZERO_ENTRYPOINT_ADDRESS 0x34200000u
++#define HPCGEN2_SRAM_METHA_RAM_ZERO_END_ADDRESS     0x343BFFFFu
++#define HPCGEN2_SRAM_METHA_RAM_ZERO_SIZE            1835008u
++
++/*****   IPL   ****/
++#define HPCGEN2_SRAM_IPL_START_ADDRESS   0x343C0000u
++#define HPCGEN2_SRAM_IPL_ENTRYPOINT_ADDRESS 0x343C0000u
++#define HPCGEN2_SRAM_IPL_END_ADDRESS     0x343FFFFFu
++#define HPCGEN2_SRAM_IPL_SIZE            262144u
++
++/*****   PROPAIMAGE   ****/
++#define HPCGEN2_SRAM_PROPAIMAGE_START_ADDRESS   0x34400000u
++#define HPCGEN2_SRAM_PROPAIMAGE_ENTRYPOINT_ADDRESS 0x34400000u
++#define HPCGEN2_SRAM_PROPAIMAGE_END_ADDRESS     0x3453FFFFu
++#define HPCGEN2_SRAM_PROPAIMAGE_SIZE            1310720u
++
++/*****   PROPA_CODE   ****/
++#define HPCGEN2_SRAM_PROPA_CODE_START_ADDRESS   0x34400000u
++#define HPCGEN2_SRAM_PROPA_CODE_ENTRYPOINT_ADDRESS 0x34400000u
++#define HPCGEN2_SRAM_PROPA_CODE_END_ADDRESS     0x344BFFFFu
++#define HPCGEN2_SRAM_PROPA_CODE_SIZE            786432u
++
++/*****   PROPA_CONST   ****/
++#define HPCGEN2_SRAM_PROPA_CONST_START_ADDRESS   0x344C0000u
++#define HPCGEN2_SRAM_PROPA_CONST_ENTRYPOINT_ADDRESS 0x344C0000u
++#define HPCGEN2_SRAM_PROPA_CONST_END_ADDRESS     0x344FFFFFu
++#define HPCGEN2_SRAM_PROPA_CONST_SIZE            262144u
++
++/*****   PROPA_RAM_INIT   ****/
++#define HPCGEN2_SRAM_PROPA_RAM_INIT_START_ADDRESS   0x34500000u
++#define HPCGEN2_SRAM_PROPA_RAM_INIT_ENTRYPOINT_ADDRESS 0x34500000u
++#define HPCGEN2_SRAM_PROPA_RAM_INIT_END_ADDRESS     0x3453FFFFu
++#define HPCGEN2_SRAM_PROPA_RAM_INIT_SIZE            262144u
++
++/*****   PROPA_RAM_ZERO   ****/
++#define HPCGEN2_SRAM_PROPA_RAM_ZERO_START_ADDRESS   0x34540000u
++#define HPCGEN2_SRAM_PROPA_RAM_ZERO_ENTRYPOINT_ADDRESS 0x34540000u
++#define HPCGEN2_SRAM_PROPA_RAM_ZERO_END_ADDRESS     0x346AFFFFu
++#define HPCGEN2_SRAM_PROPA_RAM_ZERO_SIZE            1507328u
++
++/*****   EXCHANGE_AREA   ****/
++#define HPCGEN2_SRAM_EXCHANGE_AREA_START_ADDRESS   0x346B0000u
++#define HPCGEN2_SRAM_EXCHANGE_AREA_ENTRYPOINT_ADDRESS 0x346B0000u
++#define HPCGEN2_SRAM_EXCHANGE_AREA_END_ADDRESS     0x346BFFFFu
++#define HPCGEN2_SRAM_EXCHANGE_AREA_SIZE            65536u
++
++/*****   servicehdl_data   ****/
++#define HPCGEN2_SRAM_SERVICEHDL_DATA_START_ADDRESS   0x346B0000u
++#define HPCGEN2_SRAM_SERVICEHDL_DATA_ENTRYPOINT_ADDRESS 0x346B0000u
++#define HPCGEN2_SRAM_SERVICEHDL_DATA_END_ADDRESS     0x346B01FFu
++#define HPCGEN2_SRAM_SERVICEHDL_DATA_SIZE            512u
++
++/*****   exceptionhdl_data   ****/
++#define HPCGEN2_SRAM_EXCEPTIONHDL_DATA_START_ADDRESS   0x346B0200u
++#define HPCGEN2_SRAM_EXCEPTIONHDL_DATA_ENTRYPOINT_ADDRESS 0x346B0200u
++#define HPCGEN2_SRAM_EXCEPTIONHDL_DATA_END_ADDRESS     0x346B023Fu
++#define HPCGEN2_SRAM_EXCEPTIONHDL_DATA_SIZE            64u
++
++/*****   reservedunusedarea_futureuse   ****/
++#define HPCGEN2_SRAM_RESERVEDUNUSEDAREA_FUTUREUSE_START_ADDRESS   0x346B0240u
++#define HPCGEN2_SRAM_RESERVEDUNUSEDAREA_FUTUREUSE_ENTRYPOINT_ADDRESS 0x346B0240u
++#define HPCGEN2_SRAM_RESERVEDUNUSEDAREA_FUTUREUSE_END_ADDRESS     0x346BFF6Fu
++#define HPCGEN2_SRAM_RESERVEDUNUSEDAREA_FUTUREUSE_SIZE            64816u
++
++/*****   BOOT_EXCHANGE_AREA   ****/
++#define HPCGEN2_SRAM_BOOT_EXCHANGE_AREA_START_ADDRESS   0x346BFF70u
++#define HPCGEN2_SRAM_BOOT_EXCHANGE_AREA_ENTRYPOINT_ADDRESS 0x346BFF70u
++#define HPCGEN2_SRAM_BOOT_EXCHANGE_AREA_END_ADDRESS     0x346BFFD3u
++#define HPCGEN2_SRAM_BOOT_EXCHANGE_AREA_SIZE            100u
++
++/*****   KEY_DIVERSIFICATION_FLAG   ****/
++#define HPCGEN2_SRAM_KEY_DIVERSIFICATION_FLAG_START_ADDRESS   0x346BFFD4u
++#define HPCGEN2_SRAM_KEY_DIVERSIFICATION_FLAG_ENTRYPOINT_ADDRESS 0x346BFFD4u
++#define HPCGEN2_SRAM_KEY_DIVERSIFICATION_FLAG_END_ADDRESS     0x346BFFD7u
++#define HPCGEN2_SRAM_KEY_DIVERSIFICATION_FLAG_SIZE            4u
++
++/*****   PENTA_SHUTDOWN_PATTERN   ****/
++#define HPCGEN2_SRAM_PENTA_SHUTDOWN_PATTERN_START_ADDRESS   0x346BFFD8u
++#define HPCGEN2_SRAM_PENTA_SHUTDOWN_PATTERN_ENTRYPOINT_ADDRESS 0x346BFFD8u
++#define HPCGEN2_SRAM_PENTA_SHUTDOWN_PATTERN_END_ADDRESS     0x346BFFDFu
++#define HPCGEN2_SRAM_PENTA_SHUTDOWN_PATTERN_SIZE            8u
++
++/*****   PROPA_SHUTDOWN_PATTERN   ****/
++#define HPCGEN2_SRAM_PROPA_SHUTDOWN_PATTERN_START_ADDRESS   0x346BFFE0u
++#define HPCGEN2_SRAM_PROPA_SHUTDOWN_PATTERN_ENTRYPOINT_ADDRESS 0x346BFFE0u
++#define HPCGEN2_SRAM_PROPA_SHUTDOWN_PATTERN_END_ADDRESS     0x346BFFE7u
++#define HPCGEN2_SRAM_PROPA_SHUTDOWN_PATTERN_SIZE            8u
++
++/*****   QSPI_SYNC_AREA   ****/
++#define HPCGEN2_SRAM_QSPI_SYNC_AREA_START_ADDRESS   0x346BFFE8u
++#define HPCGEN2_SRAM_QSPI_SYNC_AREA_ENTRYPOINT_ADDRESS 0x346BFFE8u
++#define HPCGEN2_SRAM_QSPI_SYNC_AREA_END_ADDRESS     0x346BFFEBu
++#define HPCGEN2_SRAM_QSPI_SYNC_AREA_SIZE            4u
++
++/*****   BOOT_BANK_FLAG   ****/
++#define HPCGEN2_SRAM_BOOT_BANK_FLAG_START_ADDRESS   0x346BFFECu
++#define HPCGEN2_SRAM_BOOT_BANK_FLAG_ENTRYPOINT_ADDRESS 0x346BFFECu
++#define HPCGEN2_SRAM_BOOT_BANK_FLAG_END_ADDRESS     0x346BFFEFu
++#define HPCGEN2_SRAM_BOOT_BANK_FLAG_SIZE            4u
++
++/*****   BOOT_MODE_FLAG   ****/
++#define HPCGEN2_SRAM_BOOT_MODE_FLAG_START_ADDRESS   0x346BFFF0u
++#define HPCGEN2_SRAM_BOOT_MODE_FLAG_ENTRYPOINT_ADDRESS 0x346BFFF0u
++#define HPCGEN2_SRAM_BOOT_MODE_FLAG_END_ADDRESS     0x346BFFF3u
++#define HPCGEN2_SRAM_BOOT_MODE_FLAG_SIZE            4u
++
++/*****   RTE_SYNC_AREA   ****/
++#define HPCGEN2_SRAM_RTE_SYNC_AREA_START_ADDRESS   0x346BFFF4u
++#define HPCGEN2_SRAM_RTE_SYNC_AREA_ENTRYPOINT_ADDRESS 0x346BFFF4u
++#define HPCGEN2_SRAM_RTE_SYNC_AREA_END_ADDRESS     0x346BFFF7u
++#define HPCGEN2_SRAM_RTE_SYNC_AREA_SIZE            4u
++
++/*****   PFE_SYNC_AREA   ****/
++#define HPCGEN2_SRAM_PFE_SYNC_AREA_START_ADDRESS   0x346BFFF8u
++#define HPCGEN2_SRAM_PFE_SYNC_AREA_ENTRYPOINT_ADDRESS 0x346BFFF8u
++#define HPCGEN2_SRAM_PFE_SYNC_AREA_END_ADDRESS     0x346BFFFBu
++#define HPCGEN2_SRAM_PFE_SYNC_AREA_SIZE            4u
++
++/*****   BootMenuValue   ****/
++#define HPCGEN2_SRAM_BOOTMENUVALUE_START_ADDRESS   0x346BFFFCu
++#define HPCGEN2_SRAM_BOOTMENUVALUE_ENTRYPOINT_ADDRESS 0x346BFFFCu
++#define HPCGEN2_SRAM_BOOTMENUVALUE_END_ADDRESS     0x346BFFFFu
++#define HPCGEN2_SRAM_BOOTMENUVALUE_SIZE            4u
++
++/*****   IPCF_PROPA_META   ****/
++#define HPCGEN2_SRAM_IPCF_PROPA_META_START_ADDRESS   0x346C0000u
++#define HPCGEN2_SRAM_IPCF_PROPA_META_ENTRYPOINT_ADDRESS 0x346C0000u
++#define HPCGEN2_SRAM_IPCF_PROPA_META_END_ADDRESS     0x346CFFFFu
++#define HPCGEN2_SRAM_IPCF_PROPA_META_SIZE            65536u
++
++/*****   IPCF_META_PROPA   ****/
++#define HPCGEN2_SRAM_IPCF_META_PROPA_START_ADDRESS   0x346D0000u
++#define HPCGEN2_SRAM_IPCF_META_PROPA_ENTRYPOINT_ADDRESS 0x346D0000u
++#define HPCGEN2_SRAM_IPCF_META_PROPA_END_ADDRESS     0x346DFFFFu
++#define HPCGEN2_SRAM_IPCF_META_PROPA_SIZE            65536u
++
++/*****   IPCF_PENTA_META   ****/
++#define HPCGEN2_SRAM_IPCF_PENTA_META_START_ADDRESS   0x346E0000u
++#define HPCGEN2_SRAM_IPCF_PENTA_META_ENTRYPOINT_ADDRESS 0x346E0000u
++#define HPCGEN2_SRAM_IPCF_PENTA_META_END_ADDRESS     0x346EFFFFu
++#define HPCGEN2_SRAM_IPCF_PENTA_META_SIZE            65536u
++
++/*****   IPCF_META_PENTA   ****/
++#define HPCGEN2_SRAM_IPCF_META_PENTA_START_ADDRESS   0x346F0000u
++#define HPCGEN2_SRAM_IPCF_META_PENTA_ENTRYPOINT_ADDRESS 0x346F0000u
++#define HPCGEN2_SRAM_IPCF_META_PENTA_END_ADDRESS     0x346FFFFFu
++#define HPCGEN2_SRAM_IPCF_META_PENTA_SIZE            65536u
++
++/*****   BL2   ****/
++#define HPCGEN2_SRAM_BL2_START_ADDRESS   0x34700000u
++#define HPCGEN2_SRAM_BL2_ENTRYPOINT_ADDRESS 0x34707000u
++#define HPCGEN2_SRAM_BL2_END_ADDRESS     0x347FFFFFu
++#define HPCGEN2_SRAM_BL2_SIZE            1048576u
++
++/*****   LLCE_CAN_SHAREDMEMORY   ****/
++#define HPCGEN2_SRAM_LLCE_CAN_SHAREDMEMORY_START_ADDRESS   0x43800000u
++#define HPCGEN2_SRAM_LLCE_CAN_SHAREDMEMORY_ENTRYPOINT_ADDRESS 0x43800000u
++#define HPCGEN2_SRAM_LLCE_CAN_SHAREDMEMORY_END_ADDRESS     0x4383C7FFu
++#define HPCGEN2_SRAM_LLCE_CAN_SHAREDMEMORY_SIZE            247808u
++
++/*****   LLCE_LIN_SHAREDMEMORY   ****/
++#define HPCGEN2_SRAM_LLCE_LIN_SHAREDMEMORY_START_ADDRESS   0x4383C800u
++#define HPCGEN2_SRAM_LLCE_LIN_SHAREDMEMORY_ENTRYPOINT_ADDRESS 0x4383C800u
++#define HPCGEN2_SRAM_LLCE_LIN_SHAREDMEMORY_END_ADDRESS     0x4383C89Fu
++#define HPCGEN2_SRAM_LLCE_LIN_SHAREDMEMORY_SIZE            160u
++
++/*****   LLCE_BOOT_END   ****/
++#define HPCGEN2_SRAM_LLCE_BOOT_END_START_ADDRESS   0x4383C8A0u
++#define HPCGEN2_SRAM_LLCE_BOOT_END_ENTRYPOINT_ADDRESS 0x4383C8A0u
++#define HPCGEN2_SRAM_LLCE_BOOT_END_END_ADDRESS     0x4383C8EFu
++#define HPCGEN2_SRAM_LLCE_BOOT_END_SIZE            80u
++
++
++#endif // SRAM_LAYOUT_ADDRESS_H
+-- 
+2.17.1
+

@@ -1,0 +1,468 @@
+diff -ruN a/drivers/net/doip-quiesce.c b/drivers/net/doip-quiesce.c
+--- a/drivers/net/doip-quiesce.c	1970-01-01 01:00:00.000000000 +0100
++++ b/drivers/net/doip-quiesce.c	2022-09-14 16:06:47.775534893 +0200
+@@ -0,0 +1,435 @@
++/**
++ * Copyright 2022 Continental AG
++ * All rights exclusively reserved for Continental AG,
++ * unless expressly agreed to otherwise.
++ */
++
++#include <linux/kernel.h>
++#include <linux/version.h>
++#include <linux/init.h>
++#include <linux/module.h>
++#include <linux/kdev_t.h>
++#include <linux/fs.h>
++#include <linux/cdev.h>
++#include <linux/device.h>
++#include <linux/slab.h>
++#include <linux/uaccess.h>
++#include <linux/sysfs.h>
++#include <linux/kobject.h>
++#include <linux/skbuff.h>
++#include <linux/netfilter.h>
++#include <linux/netfilter_ipv4.h>
++#include <linux/tcp.h>
++#include <linux/ip.h>
++#include <linux/mutex.h>
++#include <linux/sched.h>
++#include <linux/wait.h>
++#include <linux/string.h>
++
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Continental AG");
++MODULE_DESCRIPTION("A simple netfilter module to quiesce DoIP traffic once a pattern is matched");
++MODULE_VERSION("0.01");
++
++#define DOIP_TYPE_DIAG_MSG 		0x8001
++#define DOIP_HEADER_LEN 8
++#define DIAG_MSG_HEADER_LEN 	4	
++
++/**
++ * Patterns
++ * */
++#define DOIP_PATTERN_MAX_NUM 	2
++#define DOIP_PATTERN_MAX_LEN	8
++#define PAYLOAD_LEN (DOIP_HEADER_LEN+DIAG_MSG_HEADER_LEN+DOIP_PATTERN_MAX_LEN)
++
++#define IS_DEBUG_EN(l) (l <= doip_quiesce.debug_level)
++#define DEBUG(l, s, ...) \
++        if(l <= doip_quiesce.debug_level) \
++                printk(s, ## __VA_ARGS__); \
++/*
++* @brief  A pattern is an array of bytes used to find
++*         a match in doip payload
++*/
++struct doip_pattern {
++	uint8_t pattern[DOIP_PATTERN_MAX_LEN];
++	size_t len;
++	int used;
++};
++/*
++* @brief  Contains all patterns and their attributes,
++*         and avaiblable for all module's operations
++*/
++static struct doip_quiesce {
++	struct doip_pattern pattern[DOIP_PATTERN_MAX_NUM];
++	struct mutex pattern_lock;
++	uint8_t index;
++	int enable;
++	int blocked;
++	struct kobject *kobj_ref;
++	int debug_level;
++} doip_quiesce;
++
++/*
++** Function Prototypes
++*/
++/*************** Sysfs functions **********************/
++static ssize_t show_debug(struct kobject *kobj, struct kobj_attribute *attr, char *buf);
++static ssize_t store_debug(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count);
++static ssize_t show_enable(struct kobject *kobj, struct kobj_attribute *attr, char *buf);
++static ssize_t store_enable(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count);
++static ssize_t show_pattern(struct kobject *kobj, struct kobj_attribute *attr, char *buf);
++static ssize_t store_pattern(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count);
++
++/*************** Netfilter hook functions **********************/
++static void activate_netfilter(const int enable);
++
++/*************** Define attributes for value in sysfs **********************/
++static struct kobj_attribute doip_quiesce_debug_attr = __ATTR(debug, S_IWUSR | S_IRUGO, show_debug, store_debug);
++static struct kobj_attribute doip_quiesce_enable_attr = __ATTR(enable, S_IWUSR | S_IRUGO, show_enable, store_enable);
++static struct kobj_attribute doip_quiesce_pattern1_attr =
++__ATTR(pattern1, S_IWUSR | S_IRUGO, show_pattern, store_pattern);
++static struct kobj_attribute doip_quiesce_pattern2_attr =
++__ATTR(pattern2, S_IWUSR | S_IRUGO, show_pattern, store_pattern);
++
++/*
++** This function will be called when we read the sysfs file
++*/
++static ssize_t show_debug(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
++{
++	DEBUG(2, "[doip-quiesce] Read from debug\n");
++	return sprintf(buf, "%d\n", doip_quiesce.debug_level);
++}
++
++static ssize_t show_enable(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
++{
++	DEBUG(2, "[doip-quiesce] Read from enable\n");
++	return sprintf(buf, "%d\n", doip_quiesce.enable);
++}
++
++static ssize_t show_pattern(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
++{
++	struct doip_pattern *p;
++	int pos = 0;
++	int i;
++	DEBUG(2, "[doip-quiesce] Read from pattern\n");
++	if (strcmp(attr->attr.name, "pattern1") == 0) {
++		p = &doip_quiesce.pattern[0];
++	} else if (strcmp(attr->attr.name, "pattern2") == 0) {
++		p = &doip_quiesce.pattern[1];
++	} else {
++		return -EINVAL;
++	}
++	mutex_lock(&doip_quiesce.pattern_lock);
++	for (i = 0; i < p->len; i++)
++		pos += sprintf(buf + pos, "%hhx ", p->pattern[i]);
++	buf[pos - 1] = '\n';
++	mutex_unlock(&doip_quiesce.pattern_lock);
++	return pos;
++}
++
++/*
++** This function will be called when we write the sysfsfs file
++*/
++static ssize_t store_debug(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count)
++{
++	int l, r;
++	DEBUG(2, "[doip-quiesce] Write on debug\n");
++	r = kstrtoint(buf, 10, &l);
++	if ((r < 0) || (l < 0) || (l > 3)) {
++		DEBUG(1, "[doip_quiesce] Invalid debug level [0..3]\n");
++		return -EINVAL;
++	}
++	doip_quiesce.debug_level = l;
++	return count;
++}
++
++static ssize_t store_enable(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count)
++{
++	int en, r;
++	DEBUG(2, "[doip-quiesce] Write on enable\n");
++	r = kstrtoint(buf, 10, &en);
++	if (r < 0 || (en != 0 && en != 1)) {
++		DEBUG(1, "[doip_quiesce] Invalid enable value. Should be (1,2 or 3)\n");
++		return -EINVAL;
++	}
++	if (!en) {
++		doip_quiesce.pattern[0].used = 0;
++		doip_quiesce.pattern[1].used = 0;
++		doip_quiesce.blocked = 0;
++	} else if (!doip_quiesce.pattern[0].used && !doip_quiesce.pattern[1].used) {
++		DEBUG(1, "[doip_quiesce] No pattern defined, cannot enable\n");
++		return -EINVAL;
++	}
++	doip_quiesce.enable = en;
++	activate_netfilter(doip_quiesce.enable);
++	return count;
++}
++
++static ssize_t store_pattern(struct kobject *kobj, struct kobj_attribute *attr, const char *_buf, size_t count)
++{
++	struct doip_pattern *p;
++	char buf[4 * DOIP_PATTERN_MAX_LEN];
++	char *tmp;
++	DEBUG(2, "[doip-quiesce] Write on pattern\n");
++	if (doip_quiesce.enable) {
++		DEBUG(1, "[doip-quiesce] Pattern cannot be changed while in use\n");
++		return -EINVAL;
++	}
++	if (count > sizeof(buf)) {
++		DEBUG(1, "[doip-quiesce] sysfs write buffer too long\n");
++		return -EINVAL;
++	}
++	if (strcmp(attr->attr.name, "pattern1") == 0) {
++		p = &doip_quiesce.pattern[0];
++	} else if (strcmp(attr->attr.name, "pattern2") == 0) {
++		p = &doip_quiesce.pattern[1];
++	} else {
++		return -EINVAL;
++	}
++	strncpy(buf, _buf, count);
++	mutex_lock(&doip_quiesce.pattern_lock);
++	p->len = 0;
++	p->used = 0;
++	tmp = buf;
++	while (tmp && ((tmp-buf)<count) && p->len < DOIP_PATTERN_MAX_LEN) {
++		uint8_t val;
++		int n = sscanf(tmp, "%hhx", &val);
++		if (n>0) {
++			p->pattern[p->len] = val;
++			p->len++;
++			strsep(&tmp, " ");
++		} else
++			break;
++	}
++	if (p->len <= 0)
++		return -EINVAL;
++	p->used = 1;
++	mutex_unlock(&doip_quiesce.pattern_lock);
++
++	return count;
++}
++
++/*
++ ** DOIP header structure
++ */
++struct __attribute__((__packed__)) doip_hdr {
++	uint8_t prot_version;
++	uint8_t prot_version_invert;
++	uint16_t payload_type;
++	uint32_t payload_len;
++};
++
++/* We copy max 8 bytes DoIP header plus 4 bytes diag header len plus 8 bytes
++ * max pattern length
++ */
++static int copy_payload(struct sk_buff *skb, u8 * dest)
++{
++	unsigned int frag;
++	unsigned int copied = 0;
++	unsigned int to_copy = PAYLOAD_LEN;
++
++	unsigned int datalen = skb_tail_pointer(skb) - ((u8 *) tcp_hdr(skb)) - tcp_hdrlen(skb);
++	datalen = min_t(u32, datalen, PAYLOAD_LEN);
++	DEBUG(3, "[doip-quiesce] Copying %d payload bytes from skb\n", datalen);
++	memcpy(dest + copied, ((u8 *) tcp_hdr(skb)) + tcp_hdrlen(skb), datalen);
++	copied += datalen;
++	to_copy -= datalen;
++
++	for (frag = 0; to_copy > 0 && frag < skb_shinfo(skb)->nr_frags; frag++) {
++		u32 p_off, p_len, temp_copied;
++		struct page *p;
++		unsigned int frag_off;
++		skb_frag_t *f = &skb_shinfo(skb)->frags[frag];
++#if LINUX_VERSION_CODE < KERNEL_VERSION(4,19,201)
++		frag_off = f->page_offset;
++#else
++		frag_off = skb_frag_off(f);
++#endif
++		skb_frag_foreach_page(f, frag_off, skb_frag_size(f), p, p_off, p_len, temp_copied) {
++			u8 *vaddr;
++			unsigned int to_copy_here = min_t(u32, p_len, to_copy);
++			vaddr = kmap(p);
++			DEBUG(3, "[doip-quiesce] Copying %d bytes from user page\n", to_copy_here);
++			memcpy(dest + copied, vaddr + p_off, to_copy_here);
++           kunmap(p);
++			to_copy -= to_copy_here;
++			copied += to_copy_here;
++			if (!to_copy)
++				break;
++		}
++	}
++	return copied;
++}
++
++/**
++ * Find pattern
++ * return 1 if pattern is found, 0 otherwise
++ * */
++static int find_pattern(u8 * payload, unsigned int payload_len)
++{
++	uint8_t *doip_payload;
++	struct doip_hdr *doip_header;
++	unsigned int i;
++	doip_header = (struct doip_hdr *)payload;
++
++	if (payload_len < (DOIP_HEADER_LEN + DIAG_MSG_HEADER_LEN + 2)) {
++		return 0;
++	}
++	if (ntohs(doip_header->payload_type) != DOIP_TYPE_DIAG_MSG) {
++		return 0;
++	}
++
++	doip_payload = payload + sizeof(struct doip_hdr) + DIAG_MSG_HEADER_LEN;
++
++	for (i = 0; i < DOIP_PATTERN_MAX_NUM; i++) {
++		struct doip_pattern *p = &doip_quiesce.pattern[i];
++		if (!p->used)
++			continue;
++		if (payload_len < (p->len + DOIP_HEADER_LEN + DIAG_MSG_HEADER_LEN))
++			continue;
++		if (!memcmp(p->pattern, doip_payload, p->len))
++			return 1;	// found
++	}
++
++	DEBUG(3, "[doip-quiesce] No pattern found\n");
++	return 0;
++}
++
++/**
++ * Print packet for debug perpose
++ * */
++static void print_packet(struct sk_buff *skb, u8 * payload, unsigned int payload_len)
++{
++	if (IS_DEBUG_EN(3)) {
++		int pos;
++		unsigned char *buff, *ptr;
++		int i;
++
++		printk("[doip-quiesce] Tx packet with len: %d, data_len:%d, num_frags: %d, payload_len: %d\n", skb->len,
++		       skb->data_len, skb_shinfo(skb)->nr_frags, payload_len);
++		buff = (char *)kzalloc(skb->len * 10, GFP_KERNEL);
++		pos = 0;
++		for (ptr = &(skb->data[0]); ptr != skb_tail_pointer(skb); ptr++) {
++			pos += sprintf(buff + pos, "%02X ", *ptr);
++		}
++		for (i = 0; i < payload_len; i++) {
++			pos += sprintf(buff + pos, "%02X ", payload[i]);
++		}
++		printk("[doip-quiesce] %s\n", buff);
++	}
++}
++
++/**
++ * Filter on output hook
++ * */
++static unsigned int filter_hook(unsigned int hooknum, struct sk_buff *skb, const struct net_device *in,
++				const struct net_device *out, int (*okfn)(struct sk_buff *))
++{
++	struct iphdr *ip_header = ip_hdr(skb);
++	DEBUG(3, "[doip-quiesce] Enter filter hook\n");
++	if (ip_header->protocol == IPPROTO_TCP) {
++		struct tcphdr *tcp_header;
++		tcp_header = tcp_hdr(skb);
++		if (ntohs(tcp_header->source) == 13400) {
++			if (doip_quiesce.blocked) {
++				DEBUG(1, "[doip-quiesce] Packet dropped\n");
++				return NF_DROP;
++			} else {
++				u8 payload[PAYLOAD_LEN];
++				int payload_len = copy_payload(skb, payload);
++				print_packet(skb, payload, payload_len);
++
++				if (find_pattern(payload, payload_len)) {
++					DEBUG(1,
++					      "[doip-quiesce] Default session for ecu reset detected -> " "Suppressing "
++					      "further DoIP TX\n");
++					doip_quiesce.blocked = 1;
++				}
++			}
++		}
++	}
++	return NF_ACCEPT;
++}
++
++static struct nf_hook_ops doip_quiesce_nf_hook = {
++	.hook = (nf_hookfn *) filter_hook,
++	.dev = NULL,
++	.priv = NULL,
++	.pf = NFPROTO_INET,
++	.hooknum = NF_INET_LOCAL_OUT,
++	.priority = NF_IP_PRI_FIRST,
++};
++
++/**
++ * Function register/unregister hook on netfilter
++ * */
++static void activate_netfilter(const int enable)
++{
++	if (enable != 0) {
++		if (nf_register_net_hook(&init_net, &doip_quiesce_nf_hook) < 0) {
++			printk("[doip-quiesce] Fail to register hook on netfilter\n");
++		} else {
++			DEBUG(1, "[doip-quiesce] Register hook on netfilter\n");
++		}
++	} else {
++		nf_unregister_net_hook(&init_net, &doip_quiesce_nf_hook);
++		DEBUG(1, "[doip-quiesce] Unregister hook on netfilter\n");
++	}
++}
++
++static int __init doip_quiesce_init(void)
++{
++	doip_quiesce.pattern[0].used = 0;
++	doip_quiesce.pattern[1].used = 0;
++	doip_quiesce.debug_level = 0;
++	/* Creating a directory in /sys/kernel/ */
++	doip_quiesce.kobj_ref = kobject_create_and_add("doip_quiesce", kernel_kobj);
++	/* Creating sysfs file for enable */
++	if (sysfs_create_file(doip_quiesce.kobj_ref, &doip_quiesce_enable_attr.attr)) {
++		printk("[doip-quiesce] Cannot create sysfs file for enable......\n");
++		goto r_kobj;
++	}
++	/* Creating sysfs file for pattern */
++	if (sysfs_create_file(doip_quiesce.kobj_ref, &doip_quiesce_pattern1_attr.attr)) {
++		printk("[doip-quiesce] Cannot create sysfs file for pattern......\n");
++		goto r_sysfs;
++	}
++	if (sysfs_create_file(doip_quiesce.kobj_ref, &doip_quiesce_pattern2_attr.attr)) {
++		printk("[doip-quiesce] Cannot create sysfs file for pattern......\n");
++		goto r_pat;
++	}
++	/* Creating sysfs file for debug */
++	if (sysfs_create_file(doip_quiesce.kobj_ref, &doip_quiesce_debug_attr.attr)) {
++		printk("[doip-quiesce] Cannot create sysfs file for debug......\n");
++		goto r_pat2;
++	}
++	DEBUG(1, "[doip-quiesce] Device Driver Insert...Done!!!\n");
++	return 0;
++/**
++ * Rollback branch 
++ * */
++ r_pat2:
++	sysfs_remove_file(kernel_kobj, &doip_quiesce_pattern2_attr.attr);
++ r_pat:
++	sysfs_remove_file(kernel_kobj, &doip_quiesce_pattern1_attr.attr);
++ r_sysfs:
++	sysfs_remove_file(kernel_kobj, &doip_quiesce_enable_attr.attr);
++ r_kobj:
++	kobject_put(doip_quiesce.kobj_ref);
++
++	return -1;
++}
++
++static void __exit doip_quiesce_exit(void)
++{
++	nf_unregister_net_hook(&init_net, &doip_quiesce_nf_hook);
++	sysfs_remove_file(doip_quiesce.kobj_ref, &doip_quiesce_enable_attr.attr);
++	sysfs_remove_file(doip_quiesce.kobj_ref, &doip_quiesce_pattern1_attr.attr);
++	sysfs_remove_file(doip_quiesce.kobj_ref, &doip_quiesce_pattern2_attr.attr);
++	sysfs_remove_file(doip_quiesce.kobj_ref, &doip_quiesce_debug_attr.attr);
++	kobject_put(doip_quiesce.kobj_ref);
++
++	DEBUG(1, "Device Driver Remove...Done!!!\n");
++}
++
++module_init(doip_quiesce_init);
++module_exit(doip_quiesce_exit);
+diff -ruN a/drivers/net/Kconfig b/drivers/net/Kconfig
+--- a/drivers/net/Kconfig	2022-08-31 12:39:02.620395502 +0200
++++ b/drivers/net/Kconfig	2022-09-14 16:05:22.655531579 +0200
+@@ -38,6 +38,13 @@
+ 
+ if NET_CORE
+ 
++config DOIP_SUPRESS
++	tristate "DoIP traffic suppress"
++	depends on INET
++	help
++	  Say 'Y' or 'M' if you wish to be able to supress DoIP traffic based
++	  on pattern. The supression can be configured through sysfs API.
++
+ config BONDING
+ 	tristate "Bonding driver support"
+ 	depends on INET
+diff -ruN a/drivers/net/Makefile b/drivers/net/Makefile
+--- a/drivers/net/Makefile	2022-08-31 12:39:02.620395502 +0200
++++ b/drivers/net/Makefile	2022-09-14 16:05:22.655531579 +0200
+@@ -36,6 +36,7 @@
+ obj-$(CONFIG_NLMON) += nlmon.o
+ obj-$(CONFIG_NET_VRF) += vrf.o
+ obj-$(CONFIG_VSOCKMON) += vsockmon.o
++obj-$(CONFIG_DOIP_SUPRESS) += doip-quiesce.o
+ 
+ #
+ # Networking Drivers

@@ -1,0 +1,28 @@
+From 8862e9ca03e9fe7bce40e72be524bd379af8a2e1 Mon Sep 17 00:00:00 2001
+From: Raman Tunik <raman.tunik@aox-tech.de>
+Date: Tue, 8 Mar 2022 15:14:26 +0100
+Subject: [PATCH] s32g: dts: enable stm7 by default
+
+Signed-off-by: Raman Tunik <raman.tunik@aox.de>
+
+Upstream-Status: Inappropriate [custom setting]
+---
+ arch/arm64/boot/dts/freescale/s32cc.dtsi | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/freescale/s32cc.dtsi b/arch/arm64/boot/dts/freescale/s32cc.dtsi
+index 2be9f54a8ee3..f7550067ffdb 100644
+--- a/arch/arm64/boot/dts/freescale/s32cc.dtsi
++++ b/arch/arm64/boot/dts/freescale/s32cc.dtsi
+@@ -629,7 +629,7 @@ stm7: stm@40228000 {
+ 			reg = <0x0 0x40228000 0x0 0x3000>;
+ 			clocks = <&clks S32GEN1_SCMI_CLK_STM_MODULE>;
+ 			clock-names = "stm";
+-			status = "disabled";
++			status = "okay";
+ 		};
+ 
+ 		edma1: dma-controller@40244000 {
+-- 
+2.25.1
+

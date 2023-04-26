@@ -1,0 +1,55 @@
+From 117e646e6a53421fc40665ec6fb8ed520e295a36 Mon Sep 17 00:00:00 2001
+From: Thadeu Lima de Souza Cascardo <cascardo@canonical.com>
+Date: Wed, 5 Jan 2022 10:23:26 -0300
+Subject: [PATCH] UBUNTU: SAUCE: bpf: prevent helper argument PTR_TO_ALLOC_MEM
+ to have offset other than 0
+
+BugLink: https://bugs.launchpad.net/bugs/1956585 (OOB write on BPF_RINGBUF (LP: #1956585))
+
+bpf_ringbuf_reserve is currently the only helper that returns a
+PTR_TO_ALLOC_MEM, and bpf_ringbuf_submit and bpf_ringbuf_discard expect
+only such pointers.
+
+If some arithmetic is done on those pointers, those functions may corrupt
+arbritary memory.
+
+Prevent such argument types from having an offset other than 0.
+
+Also, other valid PTR_TO_MEM should not be accepted as parameters to
+bpf_ringbuf_submit and bpf_ringbuf_discard. A different type mechanism
+should be used instead, in order to guarantee that only values returned by
+bpf_ringbuf_reserve can be used.
+
+Signed-off-by: Thadeu Lima de Souza Cascardo <cascardo@canonical.com>
+Acked-by: Kamal Mostafa <kamal@canonical.com>
+Acked-by: Marcelo Henrique Cerri <marcelo.cerri@canonical.com>
+Signed-off-by: Thadeu Lima de Souza Cascardo <cascardo@canonical.com>
+
+Upstream-Status: Backported [ubuntu 5.11.0-46.51]
+CVE: CVE-2021-4204
+---
+ kernel/bpf/verifier.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/kernel/bpf/verifier.c b/kernel/bpf/verifier.c
+index 015bf2ba4a0b..a99107db75bd 100644
+--- a/kernel/bpf/verifier.c
++++ b/kernel/bpf/verifier.c
+@@ -4508,6 +4508,14 @@ static int check_func_arg(struct bpf_verifier_env *env, u32 arg,
+ 		 */
+ 		goto skip_type_check;
+ 
++	/* We already checked for NULL above */
++	if (arg_type == ARG_PTR_TO_ALLOC_MEM) {
++		if (reg->off != 0 || !tnum_is_const(reg->var_off)) {
++			verbose(env, "helper wants pointer to allocated memory\n");
++			return -EACCES;
++		}
++	}
++
+ 	err = check_reg_type(env, regno, arg_type, fn->arg_btf_id[arg]);
+ 	if (err)
+ 		return err;
+-- 
+2.25.1
+

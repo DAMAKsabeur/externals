@@ -1,0 +1,236 @@
+diff --git a/drivers/ptp/Kconfig b/drivers/ptp/Kconfig
+index deb429a3dff1..a528bd319efb 100644
+--- a/drivers/ptp/Kconfig
++++ b/drivers/ptp/Kconfig
+@@ -153,4 +153,14 @@ config PTP_1588_CLOCK_VMW
+ 	  To compile this driver as a module, choose M here: the module
+ 	  will be called ptp_vmw.
+ 
++config CLOCK_FACEASY
++	tristate "FACEASY clock"
++	select PTP_1588_CLOCK
++	default n
++	help
++	  This driver adds support for the FACEASY clock.
++
++	  To compile this driver as a module, choose M here: the module
++	  will be called clock_faceasy.
++
+ endmenu
+diff --git a/drivers/ptp/Makefile b/drivers/ptp/Makefile
+index 7aff75f745dc..4fd67ee1456a 100644
+--- a/drivers/ptp/Makefile
++++ b/drivers/ptp/Makefile
+@@ -15,3 +15,4 @@ ptp-qoriq-$(CONFIG_DEBUG_FS)		+= ptp_qoriq_debugfs.o
+ obj-$(CONFIG_PTP_1588_CLOCK_IDTCM)	+= ptp_clockmatrix.o
+ obj-$(CONFIG_PTP_1588_CLOCK_IDT82P33)	+= ptp_idt82p33.o
+ obj-$(CONFIG_PTP_1588_CLOCK_VMW)	+= ptp_vmw.o
++obj-$(CONFIG_CLOCK_FACEASY)		+= clock_faceasy.o
+diff --git a/drivers/ptp/clock_faceasy.c b/drivers/ptp/clock_faceasy.c
+new file mode 100644
+index 000000000000..341ffcaf0a8a
+--- /dev/null
++++ b/drivers/ptp/clock_faceasy.c
+@@ -0,0 +1,202 @@
++/*
++ * Virtual PTP Clock for FacEasy
++ *
++ * Copyright (C) 2022 Continental Automotive Singapore Pte Ltd
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ * GNU General Public License for more details.
++ */
++
++#include <linux/device.h>
++#include <linux/err.h>
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/io.h>
++
++#include <linux/fs.h>
++#include <asm/uaccess.h>
++#include <linux/ptp_clock_kernel.h>
++
++
++#define TSYN_DATA_SIZE 24       /* time sync data structure size */
++#define STM7_ADDR 0x40228000UL  /* STM7 Start Address */
++#define STM_REGION 0x3000       /* STM register region */
++#define STM_CNT 0x04            /* STM CNT Offset */
++#define STM_CNT_MAX 4294967295U /* STM CNT Max Value */
++#define NANOSEC_MAX 999999999U  /* nano sec max value */
++
++/*
++ * STM7 Settings
++ * Prescaler : 133
++ * Clock Frequency : 133,333,333 Hz
++ * tick/sec : 1,002,506.2656642
++ * nsec/tick : 997.5
++*/
++#define NS_CONV 9975U            /* 9975 nanoseconds per 10 ticks */
++
++static void __iomem *stm7_register; /* time sync STM7 access     */
++
++struct ez1_clock {
++    struct ptp_clock *ptp_clock;
++    struct device *dev;
++    struct ptp_clock_info caps;
++};
++
++/* time sync data structure */
++typedef struct
++{
++    uint32_t propaStmCNT;       /* 32bit Propa STM7 CNT value */
++    uint32_t methaStmCNT;       /* 32bit Metha STM7 CNT value */
++    uint32_t nsec;              /* nanoseconds part of the timestamp */
++    uint32_t sec;               /* 32bit LSB of the 48bit part of the timestamp */
++    uint16_t secHi;             /* 16bit MSB of the 48bit part of the timestamp */
++    uint8_t  timeBaseStatus;    /* status of the time base */
++    uint8_t  userDataLength;    /* user data length in bytes */
++    uint8_t  userByte0;         /* user byte 0 */
++    uint8_t  userByte1;         /* user byte 1 */
++    uint8_t  userByte2;         /* user byte 3 */
++    uint8_t  padding;           /* (padding) */
++} tsyn_timedata_t;
++
++/* basic clock operations */
++static int clock_ez1_adjfreq(struct ptp_clock_info *ptp, s32 ppb)
++{
++    return -EOPNOTSUPP;
++}
++
++static int clock_ez1_adjtime(struct ptp_clock_info *ptp, s64 delta)
++{
++    return -EOPNOTSUPP;
++}
++
++static int clock_ez1_settime(struct ptp_clock_info *ptp, const struct timespec64 *ts)
++{
++    return -EOPNOTSUPP;
++}
++
++static int clock_ez1_gettime(struct ptp_clock_info *ptp, struct timespec64 *ts)
++{
++    char filename[] = "/sys/kernel/ipc-shm-hpe/tsyn";
++    struct file *f;
++    tsyn_timedata_t rd_data;
++    mm_segment_t fs;
++    char buf[TSYN_DATA_SIZE];
++    int ret;
++    uint32_t peSTM = 0;         // STM CNT value obtain at Penta
++    uint32_t stm_delta = 0;     // Metha & Penta STM CNT delta
++    uint64_t delay = 0;         // delay in nano sec
++
++    fs = get_fs();                                      // save current F-Segment
++    set_fs(KERNEL_DS);                                  // change to Kernel Data Segment
++    f = filp_open(filename, O_RDONLY, 0);               // open target file
++    set_fs(fs);                                         // set previous F-Segment setting
++    if(IS_ERR(f)) {                                     // file open error
++        return -1;
++    }
++    else {                                              // file open success
++        fs = get_fs();                                  // save current F-Segment
++        set_fs(KERNEL_DS);                              // change to Kernel Data Segment
++        ret = kernel_read(f, buf, TSYN_DATA_SIZE, 0);   // read the file
++        set_fs(fs);                                     // set previous F-Segment setting
++        memcpy(&rd_data, buf, sizeof(buf));             // copy read data to structure
++        filp_close(f, NULL);
++        /*
++         * Formula : PentaTime = MethaTime + (Delta STM)
++         * PentaTime - time return by the ptp clock
++         * MethaTime - sync time (Metha time) 
++         * Delta STM - STM7 CNT value difference between Metha and Penta (converted to ns)
++         */
++        // Metha time as read from tsyn file
++        ts->tv_sec = ((u64)rd_data.secHi << 32) | rd_data.sec;
++        ts->tv_nsec = (u32)rd_data.nsec;
++
++        // get STM7 CNT value
++        peSTM = readl(stm7_register + STM_CNT);
++
++        // STM7 CNT rollover check
++        if (peSTM < rd_data.methaStmCNT) {  // STM CNT rollover occured
++            stm_delta = (STM_CNT_MAX - rd_data.methaStmCNT) + peSTM;
++        }
++        else {
++            stm_delta = peSTM - rd_data.methaStmCNT;
++        }
++        delay = (u64)stm_delta * NS_CONV;   // convert to nsec/10ticks
++        delay /= 10;        // convert back to nsec/tick resolution
++
++        if (delay > NANOSEC_MAX) {
++            ts->tv_sec += (u64)(delay / (NANOSEC_MAX + 1U));   // add the sec portion
++        }
++
++        ts->tv_nsec += (u32)(delay % (NANOSEC_MAX + 1U));      // add delay nsec portion only
++
++        if (ts->tv_nsec > NANOSEC_MAX) {
++            ts->tv_sec += (u64)(ts->tv_nsec / (NANOSEC_MAX + 1U));  // add the sec portion
++            ts->tv_nsec %= (NANOSEC_MAX + 1U);                      // remove sec part PR Fix: VNICESYF3-2924
++        }
++    }
++    return 0;
++}
++
++static int clock_ez1_enable(struct ptp_clock_info *ptp, struct ptp_clock_request *rq, int on)
++{
++    return -EOPNOTSUPP;
++}
++
++static const struct ptp_clock_info clock_ez1_caps = {
++    .owner      = THIS_MODULE,
++    .name       = "FacEasy Clock",
++    .max_adj    = 0,
++    .n_ext_ts   = 0,
++    .n_pins     = 0,
++    .pps        = 0,
++    .adjfreq    = clock_ez1_adjfreq,
++    .adjtime    = clock_ez1_adjtime,
++    .gettime64  = clock_ez1_gettime,
++    .settime64  = clock_ez1_settime,
++    .enable     = clock_ez1_enable,
++};
++
++/* kernel module operations */
++static struct ez1_clock ez1_clock;
++
++static void __exit clock_ez1_exit(void)
++{
++    iounmap(stm7_register);
++    ptp_clock_unregister(ez1_clock.ptp_clock);
++}
++
++static int __init clock_ez1_init(void)
++{
++    ez1_clock.caps = clock_ez1_caps;
++
++    /* init STM7 register mapping */
++    stm7_register = ioremap(STM7_ADDR, STM_REGION);
++    if (IS_ERR(stm7_register)) {
++        pr_err("Failed to ioremap STM7.\n");
++        return PTR_ERR(stm7_register);
++    }
++
++    ez1_clock.ptp_clock = ptp_clock_register(&ez1_clock.caps, NULL);
++    if (IS_ERR(ez1_clock.ptp_clock)) {
++        iounmap(stm7_register);
++        pr_err("Failed to register ptp clock.\n");
++        return -ENODEV;
++    }
++
++    return 0;
++}
++
++module_init(clock_ez1_init);
++module_exit(clock_ez1_exit);
++
++MODULE_AUTHOR("Neil Cagaoan <neil.medina.cagaoan@continental-corporation.com>");
++MODULE_DESCRIPTION("Virtual PTP Clock (Relative Network Time)");
++MODULE_LICENSE("GPL");

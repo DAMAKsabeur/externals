@@ -1,0 +1,54 @@
+From cdd2875e84de83fb667c8d8a9c1e5f36aaf29f7a Mon Sep 17 00:00:00 2001
+From: Matthias von Faber <matthias.vonfaber@aox-tech.de>
+Date: Mon, 10 Jun 2019 12:57:37 +0200
+Subject: [PATCH] tracing: add tgid to common trace event fields for rt kernel
+
+TGID field is shared amount all tasks that have the same address space.
+Providing TGID field to common trace event fields allows to group tasks
+by their process context for system analysis.
+
+Originally-by: Hans-Peter Reichert <hans-peter.reichert@aox-tech.de>
+Signed-off-by: Matthias von Faber <matthias.vonfaber@aox-tech.de>
+Signed-off-by: Raman Tunik <raman.tunik@aox-tech.de>
+
+Upstream-Status: Inappropriate [enable feature]
+---
+ include/linux/trace_events.h | 2 ++
+ kernel/trace/trace_events.c  | 1 +
+ 2 files changed, 3 insertions(+)
+
+diff --git a/include/linux/trace_events.h b/include/linux/trace_events.h
+index 89c3f7162267..d4715fe16c0f 100644
+--- a/include/linux/trace_events.h
++++ b/include/linux/trace_events.h
+@@ -67,6 +67,7 @@ struct trace_entry {
+ 	unsigned char		flags;
+ 	unsigned char		preempt_count;
+ 	int			pid;
++	int			tgid;
+ 	unsigned char		migrate_disable;
+ 	unsigned char		preempt_lazy_count;
+ };
+@@ -158,6 +159,7 @@ static inline void tracing_generic_entry_update(struct trace_entry *entry,
+ 	entry->migrate_disable		= (trace_ctx >> 8) & 0xff;
+ 	entry->preempt_lazy_count	= (trace_ctx >> 16) & 0xff;
+ 	entry->pid			= current->pid;
++	entry->tgid			= (current->flags & PF_KTHREAD) ? 2 : current->tgid;
+ 	entry->type			= type;
+ 	entry->flags			= trace_ctx >> 24;
+ }
+diff --git a/kernel/trace/trace_events.c b/kernel/trace/trace_events.c
+index 7cfcf301b6e6..e4e2265e49e1 100644
+--- a/kernel/trace/trace_events.c
++++ b/kernel/trace/trace_events.c
+@@ -183,6 +183,7 @@ static int trace_define_common_fields(void)
+ 	__common_field(unsigned char, flags);
+ 	__common_field(unsigned char, preempt_count);
+ 	__common_field(int, pid);
++	__common_field(int, tgid);
+ 	__common_field(unsigned char, migrate_disable);
+ 	__common_field(unsigned char, preempt_lazy_count);
+ 
+-- 
+2.20.1
+

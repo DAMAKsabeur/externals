@@ -1,0 +1,15 @@
+diff --git a/include/linux/audit.h b/include/linux/audit.h
+index b3d859831a31..abbd2e2c895f 100644
+--- a/include/linux/audit.h
++++ b/include/linux/audit.h
+@@ -549,8 +549,10 @@ static inline void audit_log_nfcfg(const char *name, u8 af,
+ 				   unsigned int nentries,
+ 				   enum audit_nfcfgop op, gfp_t gfp)
+ {
++#if 0   // Disable audit
+ 	if (audit_enabled)
+ 		__audit_log_nfcfg(name, af, nentries, op, gfp);
++#endif
+ }
+ 
+ extern int audit_n_rules;

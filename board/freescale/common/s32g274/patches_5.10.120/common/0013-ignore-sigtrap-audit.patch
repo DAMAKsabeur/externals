@@ -1,0 +1,13 @@
+diff --git a/kernel/auditsc.c b/kernel/auditsc.c
+index 07e2788bbbf1..e72b41ac5a31 100644
+--- a/kernel/auditsc.c
++++ b/kernel/auditsc.c
+@@ -2690,7 +2690,7 @@ void audit_core_dumps(long signr)
+ 	if (!audit_enabled)
+ 		return;
+ 
+-	if (signr == SIGQUIT)	/* don't care for those */
++	if (signr == SIGQUIT || signr == SIGTRAP)	/* don't care for those */
+ 		return;
+ 
+ 	ab = audit_log_start(audit_context(), GFP_KERNEL, AUDIT_ANOM_ABEND);
