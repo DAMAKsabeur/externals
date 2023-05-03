@@ -1,0 +1,7 @@
+config BR2_PACKAGE_HOST_S32GX_MKIMAGE
+	bool "host s32gx-mkimage"
+	help
+	  s32gx-mkimage is used to combine input images and generate
+	  final boot image with appropriate IVT set.
+
+	  https://github.com/nxp-s32gx/s32gx-mkimage
