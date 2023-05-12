@@ -13,13 +13,11 @@ HOST_S32GX_MKIMAGE_DEPENDENCIES = host-zlib
 define HOST_S32GX_MKIMAGE_BUILD_CMDS
 	$(HOST_MAKE_ENV) $(MAKE) $(HOST_CONFIGURE_OPTS) \
 		CFLAGS="$(HOST_CFLAGS) -std=c99" \
-		-C $(@D)/tools -f Makefile mkimage
+		-C $(@D)/tools -f Makefile 
 endef
 
 define HOST_S32GX_MKIMAGE_INSTALL_CMDS
-	$(INSTALL) -D -m 755 $(@D)/iMX8M/mkimage_s32gx $(HOST_DIR)/bin/mkimage_s32gx
-	$(INSTALL) -D -m 755 $(@D)/iMX8M/mkimage_fit_atf.sh $(HOST_DIR)/bin/mkimage_fit_atf.sh
-	$(INSTALL) -D -m 755 $(@D)/iMX8M/print_fit_hab.sh $(HOST_DIR)/bin/print_fit_hab.sh
+	$(INSTALL) -D -m 755 $(@D)/tools/mkimage_s32gx $(HOST_DIR)/bin/mkimage_s32gx
 endef
 # i.MX8 and i.MX8X
 #define HOST_S32GX_MKIMAGE_BUILD_CMDS

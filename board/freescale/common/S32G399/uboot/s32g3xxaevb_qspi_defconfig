@@ -1,0 +1,7 @@
+CONFIG_ARM=y
+CONFIG_ARCH_S32G3=y
+CONFIG_TARGET_S32G3XXAEVB=y
+CONFIG_QSPI_BOOT=y
+CONFIG_HSE_SECBOOT=y
+CONFIG_HSE_FW_FILE="/home/uic56995/Common/BuildRoot_Ext/externals/board/freescale/common/S32G399/uboot/s32cc_hse_fw.bin"
+CONFIG_USB_ULPI_VIEWPORT=y
