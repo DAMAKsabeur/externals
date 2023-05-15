@@ -1,0 +1,267 @@
+/*
+ * Copyright 2019-2020 NXP
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ */
+
+/dts-v1/;
+#include "fsl-s32g274a.dtsi"
+#include <dt-bindings/pinctrl/hpe-pinctrl.h>
+#include <dt-bindings/gpio/gpio.h>
+
+
+/ {
+	model = "Freescale S32G274";
+	compatible = "fsl,s32g274-simu", "fsl,s32g274",
+				 "arm,vexpress,v2p-aarch64", "arm,vexpress";
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+/*removed below labels which is already found in fsl-s32g.dtsi filr
+		pfe_reserved: pfebufs@83400000 {
+			compatible = "fsl,s32g-pfe-ddr";
+                        reg = <0 0x82800000 0 0x1800000>;
+			no-map;
+			status = "okay";
+		}; */
+	}; 
+
+
+	pwm {
+			status = "disabled";
+	};
+
+	src: src@4007C000 {
+		compatible = "fsl,s32g-tmu-src", "syscon";
+		reg = <0x0 0x4007C000 0x0 0x1000>;
+		#reset-cells = <1>;
+		status = "okay";
+	};
+
+};
+
+&tmu {
+	compatible = "fsl,s32g-tmu";
+	reg = <0x0 0x400A8000 0x0 0x1000>;
+	clocks = <&clks S32GEN1_CLK_XBAR_DIV3>;
+	clock-names = "tsens";
+	status = "okay";
+};
+
+/* For EB Linux 2.21 PFE master, keep serdes initialisation from boot */
+&serdes0 {
+	status = "disabled";
+};
+&serdes1 {
+	status = "disabled";
+};
+
+&pfe {
+	status = "okay";
+        compatible = "fsl,s32g274a-pfeng";
+	fsl,fw-class-name = "s32g_pfe_class.fw";
+	fsl,fw-util-name = "s32g_pfe_util.fw";
+	memory-region = <&pfe_reserved_bmu2>, <&pfe_reserved>, <&pfe_reserved_bdr>;
+};
+
+&pfe_logif0 {
+	status = "okay";
+	fsl,pfeng-hif-channel = <0>;
+	phy-mode = "sgmii";
+	fixed-link {
+		speed = <1000>;
+		full-duplex;
+	};
+};
+
+
+&pfe_mdio0 {
+	/* used by USB ULPI */
+	status = "disabled";
+};
+
+&gmac0 {
+	status = "disabled";
+};
+
+&fxosc {
+	clock-frequency = <40000000>;
+};
+
+&generic_timer {
+	clock-frequency = <5000000>;
+};
+
+&i2c0 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl0_i2c0>;
+	eepromi2c0: eeprom@50 {
+		compatible = "atmel,24c02";
+		reg = <50>;
+	};
+};
+
+&i2c2 {
+	status = "disabled";
+};
+
+&i2c4 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl0_i2c4 &pinctrl1_i2c4>;
+};
+
+&usdhc0 {
+	status = "okay";
+};
+
+
+&stm0 {
+	status = "okay";
+};
+
+&stm1 {
+	status = "okay";
+};
+
+&stm2 {
+	status = "okay";
+};
+
+&fccu {
+	status = "okay";
+};
+
+&swt3 {
+	status = "okay";
+};
+
+&swt4 {
+	status = "okay";
+};
+
+&swt5 {
+	status = "okay";
+};
+
+&swt6 {
+	status = "okay";
+};
+
+&pit0 {
+	status = "okay";
+};
+
+&pit1 {
+	status = "okay";
+};
+
+&pinctrl0 {
+	status = "okay";
+	s32g274a-evb {
+
+		// I2C0 connected to EEPROM
+		pinctrl0_i2c0: i2c0grp {
+			fsl,pins = <
+				S32_GEN1_PAD_PB0__I2C0_DATA_OUT
+				S32_GEN1_PAD_PB0__I2C0_DATA_IN
+				S32_GEN1_PAD_PB1__I2C0_SCLK_OUT
+				S32_GEN1_PAD_PB1__I2C0_SCLK_IN
+			>;
+		};
+
+		pinctrl0_i2c3: i2c3grp {
+			fsl,pins = <
+				S32_GEN1_PAD_PE15__I2C3_SCLK_OUT
+				S32_GEN1_PAD_PF2__I2C3_DATA_OUT
+			>;
+		};
+
+		// I2C4 connected to PMIC
+		pinctrl0_i2c4: i2c4grp {
+			fsl,pins = <
+				S32_GEN1_PAD_PC2__I2C4_SCLK_OUT
+				S32_GEN1_PAD_PC1__I2C4_DATA_OUT
+			>;
+		};
+
+		pinctrl_gpio0: gpiogrp0 {
+			fsl,pins = <
+				S32_GEN1_PAD_PC9__SIUL_GPIO41   // UART_GWP2CON_TX
+				S32_GEN1_PAD_PC10__SIUL_GPIO42  // UART_GWP2CON_RX
+				S32_GEN1_PAD_PC14__SIUL_GPIO46  // EMMC_GWP_CLK
+				S32_GEN1_PAD_PC15__SIUL_GPIO47  // EMMC_GWP_CMD
+				S32_GEN1_PAD_PD0__SIUL_GPIO48   // EMMC_GWP_DATA_0
+				S32_GEN1_PAD_PD1__SIUL_GPIO49   // EMMC_GWP_DATA_1
+				S32_GEN1_PAD_PD2__SIUL_GPIO50   // EMMC_GWP_DATA_2
+				S32_GEN1_PAD_PD3__SIUL_GPIO51   // EMMC_GWP_DATA_3
+				S32_GEN1_PAD_PD4__SIUL_GPIO52   // EMMC_GWP_DATA_4
+				S32_GEN1_PAD_PD5__SIUL_GPIO53   // EMMC_GWP_DATA_5
+				S32_GEN1_PAD_PD6__SIUL_GPIO54   // EMMC_GWP_DATA_6
+				S32_GEN1_PAD_PD7__SIUL_GPIO55   // EMMC_GWP_DATA_7
+				S32_GEN1_PAD_PD8__SIUL_GPIO56   // EMMC_GWP_RESET_N
+				S32_GEN1_PAD_PD10__SIUL_GPIO58  // EMMC_GWP_DQS
+				>;
+		};
+	};
+};
+
+&pinctrl1 {
+	status = "okay";
+	s32g274a-evb {
+
+		// I2C3 connected to Ethernet switches
+		pinctrl1_i2c3: i2c3grp {
+			fsl,pins = <
+				S32_GEN1_PAD_PE15__I2C3_SCLK_IN
+				S32_GEN1_PAD_PF2__I2C3_DATA_IN
+			>;
+		};
+
+		// I2C4 connected to PMIC
+		pinctrl1_i2c4: i2c4grp {
+			fsl,pins = <
+				S32_GEN1_PAD_PC2__I2C4_SCLK_IN
+				S32_GEN1_PAD_PC1__I2C4_DATA_IN
+			>;
+		};
+
+	};
+};
+
+&edma0 {
+	status = "okay";
+};
+
+&edma1 {
+	status = "okay";
+};
+
+&spi0 {
+	status = "disabled";
+};
+
+
+&pcie0 {
+	status = "disabled";
+};
+
+&pcie1 {
+	status = "disabled";
+};
+
+&gpio1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_gpioeirq>;
+	status = "okay";
+};

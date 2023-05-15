@@ -1,0 +1,148 @@
+From df2cefc32fa0d6b9a8bd155930ad5e055e711f5a Mon Sep 17 00:00:00 2001
+From: "Damak Sabeur (uic56995)" <sabeur damak>
+Date: Sat, 13 May 2023 01:21:57 +0200
+Subject: [PATCH] add cmi uboot configfile
+
+---
+ configs/s32g3_hper_gen2_xmi_defconfig | 129 ++++++++++++++++++++++++++
+ 1 file changed, 129 insertions(+)
+ create mode 100755 configs/s32g3_hper_gen2_xmi_defconfig
+
+diff --git a/configs/s32g3_hper_gen2_xmi_defconfig b/configs/s32g3_hper_gen2_xmi_defconfig
+new file mode 100755
+index 00000000..3dd03197
+--- /dev/null
++++ b/configs/s32g3_hper_gen2_xmi_defconfig
+@@ -0,0 +1,129 @@
++# CONFIG_SD_BOOT=y
++CONFIG_ARM=y
++CONFIG_ARCH_S32G3=y
++CONFIG_CUSTOM_SYS_TEXT_BASE=y
++CONFIG_SYS_TEXT_BASE=0xDFAA0000
++CONFIG_CUSTOM_SYS_DATA_BASE=y
++CONFIG_SYS_DATA_BASE=0xDFA00000
++CONFIG_QSPI_AHB_INIT=y
++CONFIG_NR_DRAM_BANKS=1
++CONFIG_TARGET_S32G3XXAEVB=y
++CONFIG_TARGET_S32GEN1_HPER_GEN2=y
++CONFIG_TARGET_S32GEN1_HPER_GEN2_G3_XMI=y
++CONFIG_HPER_GEN2_BOOTLOADER=y
++CONFIG_HPER_GEN2_BANK_MGMT=y
++CONFIG_S32_LPDDR4=y
++CONFIG_ARMV8_SPIN_TABLE=y
++CONFIG_EXTRA_KERNEL_BOOT_ARGS="hpe_args=${pfeaddr},${pfe1addr},${pfe2addr}"
++CONFIG_SYS_ERRATUM_ERR050543=y
++CONFIG_S32GEN1_HWCONFIG="pcie0:mode=sgmii,clock=int,fmhz=125,xpcs_mode=1;pcie1:mode=sgmii,clock=int,fmhz=125,xpcs_mode=2G5"
++# U-boot param environment.
++#  The partition size allocated to the u-boot paramaters is 153600 bytes.
++#  This partition contains as many U-boot param environment as there are vECU on A53 cores.
++#  So with an allocated environment of 7680 bytes, the u-boot param partition can manage 20
++#  different environment.
++CONFIG_ENV_SIZE=0x1E00
++CONFIG_ENV_SECT_SIZE=0x1E00
++CONFIG_ENV_OFFSET=0xA000
++CONFIG_ENV_VARS_UBOOT_CONFIG=y
++# CONFIG_SYS_MALLOC_F is not set
++CONFIG_TOOLS_DEBUG=y
++CONFIG_FIT=y
++CONFIG_USE_BOOTARGS=y
++CONFIG_BOOTARGS="root=/dev/ram rw earlycon"
++# CONFIG_ARCH_EARLY_INIT_R=y
++# CONFIG_BOARD_EARLY_INIT_F=y
++CONFIG_HUSH_PARSER=y
++CONFIG_CMD_MD5SUM=y
++CONFIG_MD5SUM_VERIFY=y
++CONFIG_CMD_MEMTEST=y
++# CONFIG_CMD_LZMADEC is not set
++# CONFIG_CMD_UNZIP is not set
++CONFIG_CMD_CLK=y
++CONFIG_CMD_DM=y
++CONFIG_CMD_MMC=y
++CONFIG_CMD_PART=y
++CONFIG_CMD_PCI=y
++CONFIG_CMD_MII=y
++CONFIG_CMD_PING=y
++CONFIG_CMD_PMIC=y
++CONFIG_CMD_SMC=y
++CONFIG_CMD_EXT2=y
++CONFIG_CMD_EXT4=y
++CONFIG_CMD_FS_GENERIC=y
++CONFIG_DOS_PARTITION=y
++CONFIG_ISO_PARTITION=y
++CONFIG_EFI_PARTITION=y
++CONFIG_OF_EMBED=y
++CONFIG_OF_SEPARATE=y
++# CONFIG_DEFAULT_DEVICE_TREE="fsl-s32g274a-hper-gen2"
++CONFIG_ENV_IS_IN_MMC=y
++CONFIG_NET_RANDOM_ETHADDR=y
++CONFIG_DM=y
++# CONFIG_DM_DEVICE_REMOVE is not set
++CONFIG_DM_MMC=y
++CONFIG_MMC_IO_VOLTAGE=y
++CONFIG_FSL_USDHC=y
++CONFIG_DM_ETH=y
++CONFIG_DM_MDIO_MUX=y
++#CONFIG_FSL_PFENG is not set
++#CONFIG_FSL_PFENG_EMAC_1_RGMII is not set
++CONFIG_DWC_ETH_QOS_DEVICES=y
++CONFIG_DWC_ETH_QOS_S32CC=y
++CONFIG_RGMII=y
++CONFIG_MII=y
++CONFIG_PCI=y
++CONFIG_DM_PCI=y
++CONFIG_PCIE_S32GEN1=y
++CONFIG_DM_PMIC=y
++CONFIG_FSL_LINFLEXUART=y
++CONFIG_DISPLAY_CPUINFO=n
++# CONFIG_USB_ULPI_VIEWPORT=y
++# CONFIG_REGEX is not set
++# CONFIG_EFI_LOADER is not set
++CONFIG_MMC_HS200_SUPPORT=y
++CONFIG_SPL_MMC_HS200_SUPPORT=y
++
++# CONFIG_DM_MDIO is not set 
++# CONFIG_TIMER is not set
++# CONFIG_DM_DEVICE_REMOVE is not set
++# CONFIG_MISC_INIT_R is not set
++# CONFIG_CMD_EEPROM is not set
++# CONFIG_CMD_SF is not set
++# CONFIG_CMD_SF_TEST is not set
++# CONFIG_CMD_SPI is not set
++# CONFIG_DEFAULT_SPI_BUS is not set
++# CONFIG_DEFAULT_SPI_MODE is not set
++# CONFIG_CMD_DHCP is not set
++# CONFIG_CMD_FAT is not set
++# CONFIG_OF_BOARD_FIXUP is not set
++# CONFIG_OF_LIVE is not set
++# CONFIG_SARADC_S32CC is not set
++# CONFIG_SYS_I2C_MXC is not set
++# CONFIG_I2C_EEPROM is not set
++
++# CONFIG_SJA1105 is not set
++# CONFIG_SYS_I2C_EEPROM_ADDR is not set
++# CONFIG_SYS_I2C_EEPROM_BUS is not set
++# CONFIG_SYS_EEPROM_PAGE_WRITE_BITS is not set
++# CONFIG_SYS_I2C_EEPROM_ADDR_LEN is not set
++# CONFIG_SYS_I2C_EEPROM_ADDR_OVERFLOW is not set
++
++# CONFIG_MTD is not set
++# CONFIG_DM_MTD is not set
++
++# CONFIG_PHYLIB_10G is not set
++# CONFIG_PHY_AQUANTIA is not set
++
++# CONFIG_PHY_FIXED is not set
++# CONFIG_PHY_GIGE is not set
++# CONFIG_PHY is not set
++# CONFIG_DM_PMIC_VR5510 is not set
++# CONFIG_DM_RESET is not set
++# CONFIG_SPI is not set
++# CONFIG_OF_BOARD_FIXUP is not set
++# CONFIG_OF_LIVE is not set
++# CONFIG_PHY_GIGE is not set
++# CONFIG_DISPLAY_CPUINFO is not set
++# CONFIG_OF_BOARD_FIXUP is not set
++
+-- 
+2.25.1
+

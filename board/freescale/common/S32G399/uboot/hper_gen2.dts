@@ -1,0 +1,198 @@
+/*
+ * Copyright 2019-2020 NXP
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ */
+
+/dts-v1/;
+#include "hper_gen2_common.dts"
+
+&pfe_logif1 {
+	status = "okay";
+	fsl,pfeng-hif-channel = <1>;
+	phy-mode = "rgmii";
+	phy-handle = <&mdio_phy0>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl0_pfe1_rgmii_c>, <&pinctrl1_pfe1_rgmii_c>;
+};
+
+
+&pfe_logif2 {
+	status = "okay";
+	fsl,pfeng-hif-channel = <2>;
+	phy-mode = "sgmii";
+	phy-handle = <&mdio_phy1>;
+};
+
+&pfe_mdio1 {
+	/* used by USB ULPI */
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl0_pfe1_mdio_c>, <&pinctrl1_pfe1_mdio_c>;
+	/* TI DP83TG720R PHY 0 */
+	mdio_phy0: ethernet-phy@0 {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg = <0>;
+	};
+	/* TI DP83TG720S PHY 1 */
+	mdio_phy1: ethernet-phy@1 {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg = <4>;
+	};
+	/* TI DP83TG720R PHY 2 */
+	mdio_phy2: ethernet-phy@2 {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg = <8>;
+	};
+	/* TI DP83TG720R PHY 3 */
+	mdio_phy3: ethernet-phy@3 {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg = <12>;
+	};
+};
+
+&pfe_mdio2 {
+	/* used by USB ULPI */
+	status = "disabled";
+};
+
+&qspi {
+	status = "ok";
+
+	mx25uw51245g@0 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "jedec,spi-nor";
+		spi-max-frequency = <133000000>;
+		spi-tx-bus-width = <8>;
+		spi-rx-bus-width = <8>;
+		reg = <0>;
+	};
+};
+
+&i2c3 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl0_i2c3 &pinctrl1_i2c3>;
+
+	rtl9075a: rtlswitch@84 {
+		compatible = "rlt,RTL9075A";
+		reg = <0x54>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port-8 {
+			reg = <8>;
+			phy-handle = <&mdio_phy2>;
+		};
+
+		port-9 {
+			reg = <9>;
+			phy-handle = <&mdio_phy3>;
+		};
+	};
+
+	rtl9068a: rtlswitch@85 {
+		compatible = "rlt,RTL9068A";
+		reg = <0x55>;
+	};
+};
+
+&pinctrl0 {
+	status = "okay";
+	s32g274a-evb {
+
+		pinctrl0_pfe1_mdio_c: pfe1mdiocgrp {
+			fsl,pins = <
+				S32_G274_PAD_PD12__PFE1_MDC
+				S32_G274_PAD_PD13__PFE1_MDIO_OUT
+			>;
+		};
+
+		pinctrl0_pfe1_rgmii_c: pfe1rgmiicgrp {
+			fsl,pins = <
+				S32_G274_PAD_PE2__PFE1_TXCLK_OUT
+				S32_G274_PAD_PE3__PFE1_TX_EN_OUT
+				S32_G274_PAD_PE4__PFE1_TX_D0_OUT
+				S32_G274_PAD_PE5__PFE1_TX_D1_OUT
+				S32_G274_PAD_PE6__PFE1_TX_D2_OUT
+				S32_G274_PAD_PE7__PFE1_TX_D3_OUT
+				S32_G274_PAD_PE8__PFE1_RXCLK_OUT
+				S32_G274_PAD_PE9__PFE1_RX_DV_OUT
+				S32_G274_PAD_PE10__PFE1_RX_D0_OUT
+				S32_G274_PAD_PE11__PFE1_RX_D1_OUT
+				S32_G274_PAD_PE12__PFE1_RX_D2_OUT
+				S32_G274_PAD_PE13__PFE1_RX_D3_OUT
+			>;
+		};
+
+	};
+};
+
+&pinctrl1 {
+	status = "okay";
+	s32g274a-evb {
+
+		pinctrl1_pfe1_mdio_c: pfe1mdiocgrp {
+			fsl,pins = <
+				S32_G274_PAD_PD13__PFE1_MDIO_IN
+			>;
+		};
+
+		pinctrl1_pfe1_rgmii_c: pfe1rgmiicgrp {
+			fsl,pins = <
+				S32_G274_PAD_PE2__PFE1_TXCLK_IN
+				S32_G274_PAD_PE8__PFE1_RXCLK_IN
+				S32_G274_PAD_PE9__PFE1_RX_DV_IN
+				S32_G274_PAD_PE10__PFE1_RX_D0_IN
+				S32_G274_PAD_PE11__PFE1_RX_D1_IN
+				S32_G274_PAD_PE12__PFE1_RX_D2_IN
+				S32_G274_PAD_PE13__PFE1_RX_D3_IN
+			>;
+		};
+
+		pinctrl_gpioeirq: gpioeirqgrp {
+			fsl,pins = <
+				S32_GEN1_PAD_PB3__SIUL_EIRQ0
+				S32_GEN1_PAD_PB4__SIUL_EIRQ1
+				S32_GEN1_PAD_PB5__SIUL_EIRQ2
+				S32_GEN1_PAD_PB6__SIUL_EIRQ3
+				S32_GEN1_PAD_PB7__SIUL_EIRQ4
+				S32_GEN1_PAD_PB8__SIUL_EIRQ5
+				S32_GEN1_PAD_PB9__SIUL_EIRQ6
+				S32_GEN1_PAD_PB10__SIUL_EIRQ7
+				S32_GEN1_PAD_PB11__SIUL_EIRQ8
+				S32_GEN1_PAD_PB12__SIUL_EIRQ9
+				S32_GEN1_PAD_PB13__SIUL_EIRQ10
+				S32_GEN1_PAD_PK8__SIUL_EIRQ11
+				S32_GEN1_PAD_PB15__SIUL_EIRQ12
+				S32_GEN1_PAD_PC1__SIUL_EIRQ13
+				S32_GEN1_PAD_PC2__SIUL_EIRQ14
+				S32_GEN1_PAD_PC3__SIUL_EIRQ15
+				S32_GEN1_PAD_PL8__SIUL_EIRQ16
+				S32_GEN1_PAD_PL9__SIUL_EIRQ17       // External IRQ17 DI_GWP2PMIC_INT_N
+				S32_GEN1_PAD_PL10__SIUL_EIRQ18
+				S32_GEN1_PAD_PL11__SIUL_EIRQ19
+				S32_GEN1_PAD_PL12__SIUL_EIRQ20
+				S32_GEN1_PAD_PL13__SIUL_EIRQ21
+				S32_GEN1_PAD_PL14__SIUL_EIRQ22
+				S32_GEN1_PAD_PH1__SIUL_EIRQ23
+				S32_GEN1_PAD_PH2__SIUL_EIRQ24
+				S32_GEN1_PAD_PH3__SIUL_EIRQ25
+				S32_GEN1_PAD_PH5__SIUL_EIRQ26
+				S32_GEN1_PAD_PC4__SIUL_EIRQ27
+				S32_GEN1_PAD_PC5__SIUL_EIRQ28
+				S32_GEN1_PAD_PC6__SIUL_EIRQ29
+				S32_GEN1_PAD_PC7__SIUL_EIRQ30
+				S32_GEN1_PAD_PC8__SIUL_EIRQ31
+				>;
+		};
+	};
+};

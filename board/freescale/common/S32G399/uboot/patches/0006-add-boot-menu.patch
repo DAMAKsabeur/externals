@@ -1,0 +1,44 @@
+From 7d56955f14fb74c69e7d1adb48f9e7a6968e8090 Mon Sep 17 00:00:00 2001
+From: "Damak Sabeur (uic56995)" <sabeur damak>
+Date: Sat, 13 May 2023 01:25:18 +0200
+Subject: [PATCH] add boot menu
+
+---
+ include/configs/s32-gen1_hper_gen2.h | 25 +++++++++++++++++++++++++
+ 1 file changed, 25 insertions(+)
+ create mode 100755 include/configs/s32-gen1_hper_gen2.h
+
+diff --git a/include/configs/s32-gen1_hper_gen2.h b/include/configs/s32-gen1_hper_gen2.h
+new file mode 100755
+index 00000000..617f6d09
+--- /dev/null
++++ b/include/configs/s32-gen1_hper_gen2.h
+@@ -0,0 +1,25 @@
++/**
++ * Copyright 2021 Continental
++ * All rights exclusively reserved for Continental,
++ * unless expressly agreed to otherwise.
++ *
++ * Configuration settings for the Freescale/NXP S32-GEN1 HPER_GEN2 board.
++ */
++
++#ifndef __S32_GEN1_HPER_GEN2_H
++#define __S32_GEN1_HPER_GEN2_H
++
++#if defined(CONFIG_HPER_GEN2_BANK_MGMT)
++#define BOOTLOADER_BANK_A (0u)
++#define BOOTLOADER_BANK_B (1u)
++#endif /* CONFIG_HPER_GEN2_BANK_MGMT */
++
++#if defined(CONFIG_TARGET_S32GEN1_HPER_GEN2)
++#define BOOTLOADER_BOOT_MODE_NORMAL     (0u)
++#define BOOTLOADER_BOOT_MODE_FLASH      (1u)
++#define BOOTLOADER_BOOT_MODE_FOTA       (2u) // used to run deca with fota sequence
++#define BOOTLOADER_BOOT_MODE_UDS_UPDATE (3u) // used to run deca with uds update sequence
++#define BOOTLOADER_BOOT_MODE_FALLBACK   (4u) // used to run deca with fallback sequence
++#endif /* CONFIG_TARGET_S32GEN1_HPER_GEN2 */
++
++#endif /* __S32_GEN1_HPER_GEN2_H */
+-- 
+2.25.1
+
